@@ -5,22 +5,19 @@ function doGet() {
 }
 
 // ==========================================
-// ⚙️ KONFIGURASI HR & PAYROLL  (v2 - revisi 5 fix)
+// ⚙️ KONFIGURASI HR & PAYROLL 
 // ==========================================
 var HR_CONFIG = {
     WORKDAY: { 0: false, 1: true, 2: true, 3: true, 4: true, 5: true, 6: false },
     ISTIRAHAT: { NORMAL: 1.0, JUMAT: 1.5 },
     BATAS_WAKTU: {
-        DOUBLE_SCAN: 0.08,        // 5 Menit (re-tap instan status BERLAWANAN, mis. Masuk lalu Keluar 3 menit kemudian)
-        DUPLIKAT_STATUS: 1.0,     // FIX #2 - 1 Jam (status SAMA berurutan = kemungkinan duplikat tap mesin)
-        MIN_SHIFT: 4.0,           // Batas bawah Shift Normal (Di bawah ini = Lembur Singkat)
-        MAX_SHIFT: 16.0           // Batas atas sebelum dianggap Lupa Absen Keluar
+        DOUBLE_SCAN: 0.08, // 5 Menit (Jika < 5 menit dianggap Mengulang)
+        DUPLIKAT_STATUS: 1.0, // 1 Jam (Status sama berurutan)
+        MIN_SHIFT: 4.0,    // Batas bawah Shift Normal
+        MAX_SHIFT: 16.0    // Batas atas sebelum dianggap Lupa Absen Keluar
     },
     MAKS_JK: 8 // Maksimal Jam Kerja normal
 };
-
-// Data Dummy Karyawan Kontrak
-var KARYAWAN_KONTRAK = ["GUSTIO TRY MAHENDRA", "PEGAWAI KONTRAK 2"];
 
 // ==========================================
 // 🧠 HELPER FUNCTION
@@ -36,19 +33,14 @@ function jamToDecimal(dateObj) {
     return dateObj.getHours() + (dateObj.getMinutes() / 60);
 }
 
-// FIX #1 - Helper untuk menghitung selisih HARI murni (tanpa jam),
-// dipakai untuk koreksi shift yang melewati tengah malam.
 function stripTime(d) {
     return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
-// FIX #3 & #4 - Pembulatan ke kelipatan 30 menit, TIE di menit ke-15 turun
-// (dikonfirmasi langsung oleh akuntan: 17:16-17:45 -> 0.5 jam, 17:46-18:15 -> 1.0 jam, dst.
-// Beda dengan Math.round() bawaan JS yang membulatkan tie ke ATAS).
 function bulatkanKe30Menit(totalMenit) {
-    totalMenit = Math.round(totalMenit); // amankan dari floating point (mis. 89.99999)
+    totalMenit = Math.round(totalMenit); 
     var sisa = totalMenit % 30;
-    if (sisa < 0) sisa += 30; // safety untuk nilai negatif (seharusnya tidak terjadi)
+    if (sisa < 0) sisa += 30; 
     var dasar = totalMenit - sisa;
     return (sisa <= 15) ? dasar : dasar + 30;
 }
@@ -62,6 +54,19 @@ function prosesDataAbsensiServer(dataArray) {
     var warna = []; 
     var dataPerNama = {};
     var urutanNama = [];
+
+    // --- TAHAP 0: TARIK DATA KARYAWAN KONTRAK DARI GOOGLE SHEETS ---
+    var idSheetKontrak = '1sYQ6CQK8JAWEfUXxzf6OkdsTDcfHzRiOA_fOpxXWTyI';
+    var sheetKontrak = SpreadsheetApp.openById(idSheetKontrak).getSheets()[0];
+    var dataRangeKontrak = sheetKontrak.getRange("B2:B32").getValues();
+    
+    var KARYAWAN_KONTRAK = [];
+    for (var r = 0; r < dataRangeKontrak.length; r++) {
+        var namaDariSheet = String(dataRangeKontrak[r][0]).trim().toUpperCase();
+        if (namaDariSheet !== "") {
+            KARYAWAN_KONTRAK.push(namaDariSheet);
+        }
+    }
 
     // --- TAHAP 1: API KALENDER NASIONAL ---
     var idKalender = 'id.indonesian#holiday@group.v.calendar.google.com';
@@ -92,6 +97,8 @@ function prosesDataAbsensiServer(dataArray) {
     for (var n = 0; n < urutanNama.length; n++) {
       var namaKaryawan = urutanNama[n];
       var absenKaryawan = dataPerNama[namaKaryawan];
+      
+      // Validasi status kontrak menggunakan array yang diambil dari Sheet
       var isKontrak = (KARYAWAN_KONTRAK.indexOf(namaKaryawan.toUpperCase()) !== -1);
 
       hasil.push(["Nama", "Waktu", "Status", "Jam Kerja Total", "JK", "Lembur", "Keterangan"]);
@@ -100,7 +107,7 @@ function prosesDataAbsensiServer(dataArray) {
       var totalLemburKaryawan = 0;
       var totalHariKaryawan = 0; 
       var trackerMasuk = null; 
-      var prevEvent = null; // FIX #2 - {dt, status} dari scan sebelumnya, untuk deteksi duplikat
+      var prevEvent = null;
 
       for (var k = 0; k < absenKaryawan.length; k++) {
         var a = absenKaryawan[k];
@@ -114,26 +121,17 @@ function prosesDataAbsensiServer(dataArray) {
         var isHariLibur = (!isHariKerja || isTanggalMerah); 
         var isJumat = (dayIndex === 5);
         
-        var currentColor = "#FFFFFF"; // Normal = Putih
-        if (isHariLibur) currentColor = "#FFC000"; // Libur/Sabtu/Minggu = Oranye
-        else if (isJumat) currentColor = "#FFFF00"; // Jumat = Kuning
+        var currentColor = "#FFFFFF"; 
+        if (isHariLibur) currentColor = "#FFC000"; 
+        else if (isJumat) currentColor = "#FFFF00"; 
 
-        // ==========================================
-        // FIX #2 - FILTER DUPLIKAT STATUS BERURUTAN
-        // Jika status SAMA dengan scan sebelumnya (Masuk-Masuk atau Keluar-Keluar)
-        // DAN jaraknya < 1 jam, ini hampir pasti double-tap mesin, BUKAN shift baru.
-        // Diabaikan total - tidak membuka maupun menutup trackerMasuk apa pun.
-        // (Kasus shift penuh yang jaraknya berjam-jam, walau status sama-sama
-        // "Masuk" karena mesin salah label, TIDAK akan kena filter ini karena
-        // gap-nya jauh di atas 1 jam, dan tetap diproses normal di bawah.)
-        // ==========================================
         if (prevEvent !== null && a.status === prevEvent.status) {
             var gapDuplikat = (dtCurrent.getTime() - prevEvent.dt.getTime()) / (1000 * 60 * 60);
             if (gapDuplikat >= 0 && gapDuplikat < HR_CONFIG.BATAS_WAKTU.DUPLIKAT_STATUS) {
                 hasil.push([a.nama, a.waktuStr, a.status, "", "", "", "Mengulang - Status Sama Berurutan (Diabaikan)"]);
                 warnaBaris(currentColor);
                 prevEvent = { dt: dtCurrent, status: a.status };
-                continue; // skip absen ini, trackerMasuk TIDAK disentuh
+                continue;
             }
         }
         prevEvent = { dt: dtCurrent, status: a.status };
@@ -152,7 +150,7 @@ function prosesDataAbsensiServer(dataArray) {
                 }
                 
                 hasil.push([a.nama, a.waktuStr, a.status, "", "", "", keteranganError]);
-                warnaBaris("#FFCCCC"); // Tetap diwarnai merah pudar agar HRD aware, tapi keterangannya jelas
+                warnaBaris("#FFCCCC"); 
             }
         } else {
             var diffHours = (dtCurrent.getTime() - trackerMasuk.dt.getTime()) / (1000 * 60 * 60);
@@ -165,7 +163,7 @@ function prosesDataAbsensiServer(dataArray) {
                 hasil[trackerMasuk.rowIndex][6] = "LUPA ABSEN KELUAR (> 16 Jam)";
                 warna[trackerMasuk.rowIndex] = ["#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC"];
                 trackerMasuk = null; 
-                k--; continue; 
+                k--; continue;
             } 
             else {
                 // ====== CORE MATH ENGINE ======
@@ -173,18 +171,10 @@ function prosesDataAbsensiServer(dataArray) {
                 var dtKeluar = dtCurrent;
                 
                 var outTotal = 0, outJk = "", outLembur = "", ket = a.pengecualian;
-                
-                // Variabel status lembur bebas (berdasarkan keterangan string)
                 var isLemburBebasMasuk = (trackerMasuk.a.pengecualian === "LEMBUR BEBAS");
                 var isLemburBebas = (isLemburBebasMasuk || a.pengecualian === "LEMBUR BEBAS");
 
                 if (diffHours < HR_CONFIG.BATAS_WAKTU.MIN_SHIFT) {
-                    // ==========================================
-                    // Aturan D - Lembur Singkat
-                    // FIX #4: pembulatan pakai bulatkanKe30Menit() (bukan round ke 0.25)
-                    // FIX #5: jika hasilnya 0 (sisa <=15 menit), tandai "Tidak Dihitung"
-                    //         dan JANGAN masuk ke akumulasi total / Jam Kerja Total.
-                    // ==========================================
                     var menitLemburKasar = diffHours * 60;
                     var menitLemburEfektif = bulatkanKe30Menit(menitLemburKasar);
 
@@ -206,17 +196,10 @@ function prosesDataAbsensiServer(dataArray) {
                     else if ((mDecimal >= 15 || mDecimal <= 4)) {
                         var nightDecimal = mDecimal < 12 ? mDecimal + 24 : mDecimal;
                         if (nightDecimal < 20.0) baseStart = 20.0;
-                        else baseStart = nightDecimal; 
+                        else baseStart = nightDecimal;
                     }
 
-                    // ==========================================
-                    // Aturan B - Jam Keluar Efektif
-                    // FIX #1: koreksi lintas-tengah-malam pakai selisih HARI murni,
-                    //         bukan perbandingan Date penuh (yang nyaris tidak pernah
-                    //         bernilai true untuk shift malam yang valid).
-                    // FIX #3: pembulatan pakai bulatkanKe30Menit() (tie 15 menit turun),
-                    //         bukan Math.round() bawaan (tie 15 menit naik).
-                    // ==========================================
+                    // Aturan B: Jam Keluar Efektif
                     var kDecimal = jamToDecimal(dtKeluar);
                     var dayDiff = Math.round((stripTime(dtKeluar) - stripTime(dtMasuk)) / 86400000);
                     kDecimal += dayDiff * 24;
@@ -227,9 +210,8 @@ function prosesDataAbsensiServer(dataArray) {
 
                     // Aturan E: Istirahat
                     var potongIstirahat = HR_CONFIG.ISTIRAHAT.NORMAL;
-                    // Jumat 1.5 Jam HANYA berlaku jika bukan hari libur dan bukan status Lembur Bebas
                     if (trackerMasuk.isJum && !trackerMasuk.isLibur && !isLemburBebasMasuk) {
-                        potongIstirahat = HR_CONFIG.ISTIRAHAT.JUMAT; 
+                        potongIstirahat = HR_CONFIG.ISTIRAHAT.JUMAT;
                     }
 
                     // Aturan C: Kalkulasi Utama
@@ -241,7 +223,7 @@ function prosesDataAbsensiServer(dataArray) {
                     // Pemisahan JK & Lembur
                     if (trackerMasuk.isLibur || isLemburBebas) {
                         if (isKontrak || isLemburBebas) {
-                            outLembur = jkKotor; 
+                            outLembur = jkKotor;
                         } else {
                             ket = "Abaikan - Libur (Non-Kontrak)";
                             outTotal = ""; 
@@ -260,14 +242,13 @@ function prosesDataAbsensiServer(dataArray) {
                 if (outTotal !== "") totalHariKaryawan++;
 
                 hasil.push([a.nama, a.waktuStr, a.status, outTotal, outJk, outLembur, ket]);
-                warnaBaris(currentColor); // Menerapkan warna kalender murni
+                warnaBaris(currentColor);
 
-                trackerMasuk = null; 
+                trackerMasuk = null;
             }
         }
       }
 
-      // Validasi Akhir Data Menggantung
       if (trackerMasuk !== null) {
           hasil[trackerMasuk.rowIndex][6] = "LUPA ABSEN KELUAR (Akhir Data)";
           warna[trackerMasuk.rowIndex] = ["#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC"];
@@ -297,17 +278,14 @@ function prosesDataAbsensiServer(dataArray) {
 // 🎨 WRITER: MENYIMPAN, MEWARNAI & MEMBUAT LEGENDA
 // ==========================================
 function simpanDanWarnai(values, backgrounds) {
-  // Ganti nama file menjadi lebih profesional
   var namaFile = "Laporan Rekap & Payroll - " + Utilities.formatDate(new Date(), "Asia/Jakarta", "dd-MM-yyyy HH:mm");
   var ss = SpreadsheetApp.create(namaFile);
   var sheet = ss.getActiveSheet();
   
-  // 1. Tulis Data Utama
   var range = sheet.getRange(1, 1, values.length, values[0].length);
   range.setValues(values);
   range.setBackgrounds(backgrounds); 
 
-  // 2. Styling Data Utama
   range.setFontFamily("Arial").setVerticalAlignment("middle");
   sheet.getRange(1, 1, values.length, 3).setHorizontalAlignment("left");
   sheet.getRange(1, 4, values.length, 4).setHorizontalAlignment("center");
@@ -317,12 +295,9 @@ function simpanDanWarnai(values, backgrounds) {
   sheet.setColumnWidth(2, 120);
   sheet.setColumnWidth(7, 250);
   
-  // ==========================================
-  // 🏷️ PEMBUATAN LEGENDA DI POJOK KANAN ATAS
-  // ==========================================
-  var legendRow = 2;       // Mulai di baris ke-2
-  var legendColText = 9;   // Kolom I untuk Teks
-  var legendColColor = 10; // Kolom J untuk Kotak Warna
+  var legendRow = 2;
+  var legendColText = 9;   
+  var legendColColor = 10; 
 
   var legends = [
     { text: "Normal (Hari Kerja)", color: "#FFFFFF" },
@@ -333,7 +308,6 @@ function simpanDanWarnai(values, backgrounds) {
     { text: "Pemisah Karyawan", color: "#E7E6E6" }
   ];
 
-  // Judul Legenda
   sheet.getRange(legendRow, legendColText, 1, 2).merge()
        .setValue("LEGENDA WARNA")
        .setFontWeight("bold")
@@ -342,23 +316,18 @@ function simpanDanWarnai(values, backgrounds) {
        .setFontColor("#FFFFFF")
        .setBorder(true, true, true, true, null, null, "#000000", SpreadsheetApp.BorderStyle.SOLID);
 
-  // Isi Baris Legenda
   for (var i = 0; i < legends.length; i++) {
     var currentRow = legendRow + 1 + i;
-    
-    // Set Teks
     sheet.getRange(currentRow, legendColText)
          .setValue(legends[i].text)
          .setFontSize(10)
          .setVerticalAlignment("middle");
          
-    // Set Kotak Warna
     sheet.getRange(currentRow, legendColColor)
          .setBackground(legends[i].color)
          .setBorder(true, true, true, true, null, null, "#CCCCCC", SpreadsheetApp.BorderStyle.SOLID);
   }
 
-  // Rapikan Lebar Kolom Legenda
   sheet.setColumnWidth(legendColText, 160);
   sheet.setColumnWidth(legendColColor, 40);
 
