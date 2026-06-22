@@ -5,15 +5,16 @@ function doGet() {
 }
 
 // ==========================================
-// ⚙️ KONFIGURASI HR & PAYROLL 
+// ⚙️ KONFIGURASI HR & PAYROLL  (v2 - revisi 5 fix)
 // ==========================================
 var HR_CONFIG = {
     WORKDAY: { 0: false, 1: true, 2: true, 3: true, 4: true, 5: true, 6: false },
     ISTIRAHAT: { NORMAL: 1.0, JUMAT: 1.5 },
     BATAS_WAKTU: {
-        DOUBLE_SCAN: 0.08, // 5 Menit (Jika < 5 menit dianggap Mengulang)
-        MIN_SHIFT: 4.0,    // Batas bawah Shift Normal (Di bawah ini = Lembur Singkat)
-        MAX_SHIFT: 16.0    // Batas atas sebelum dianggap Lupa Absen Keluar
+        DOUBLE_SCAN: 0.08,        // 5 Menit (re-tap instan status BERLAWANAN, mis. Masuk lalu Keluar 3 menit kemudian)
+        DUPLIKAT_STATUS: 1.0,     // FIX #2 - 1 Jam (status SAMA berurutan = kemungkinan duplikat tap mesin)
+        MIN_SHIFT: 4.0,           // Batas bawah Shift Normal (Di bawah ini = Lembur Singkat)
+        MAX_SHIFT: 16.0           // Batas atas sebelum dianggap Lupa Absen Keluar
     },
     MAKS_JK: 8 // Maksimal Jam Kerja normal
 };
@@ -33,6 +34,23 @@ function parseWaktu(waktuStr) {
 
 function jamToDecimal(dateObj) {
     return dateObj.getHours() + (dateObj.getMinutes() / 60);
+}
+
+// FIX #1 - Helper untuk menghitung selisih HARI murni (tanpa jam),
+// dipakai untuk koreksi shift yang melewati tengah malam.
+function stripTime(d) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+// FIX #3 & #4 - Pembulatan ke kelipatan 30 menit, TIE di menit ke-15 turun
+// (dikonfirmasi langsung oleh akuntan: 17:16-17:45 -> 0.5 jam, 17:46-18:15 -> 1.0 jam, dst.
+// Beda dengan Math.round() bawaan JS yang membulatkan tie ke ATAS).
+function bulatkanKe30Menit(totalMenit) {
+    totalMenit = Math.round(totalMenit); // amankan dari floating point (mis. 89.99999)
+    var sisa = totalMenit % 30;
+    if (sisa < 0) sisa += 30; // safety untuk nilai negatif (seharusnya tidak terjadi)
+    var dasar = totalMenit - sisa;
+    return (sisa <= 15) ? dasar : dasar + 30;
 }
 
 // ==========================================
@@ -82,6 +100,7 @@ function prosesDataAbsensiServer(dataArray) {
       var totalLemburKaryawan = 0;
       var totalHariKaryawan = 0; 
       var trackerMasuk = null; 
+      var prevEvent = null; // FIX #2 - {dt, status} dari scan sebelumnya, untuk deteksi duplikat
 
       for (var k = 0; k < absenKaryawan.length; k++) {
         var a = absenKaryawan[k];
@@ -98,6 +117,26 @@ function prosesDataAbsensiServer(dataArray) {
         var currentColor = "#FFFFFF"; // Normal = Putih
         if (isHariLibur) currentColor = "#FFC000"; // Libur/Sabtu/Minggu = Oranye
         else if (isJumat) currentColor = "#FFFF00"; // Jumat = Kuning
+
+        // ==========================================
+        // FIX #2 - FILTER DUPLIKAT STATUS BERURUTAN
+        // Jika status SAMA dengan scan sebelumnya (Masuk-Masuk atau Keluar-Keluar)
+        // DAN jaraknya < 1 jam, ini hampir pasti double-tap mesin, BUKAN shift baru.
+        // Diabaikan total - tidak membuka maupun menutup trackerMasuk apa pun.
+        // (Kasus shift penuh yang jaraknya berjam-jam, walau status sama-sama
+        // "Masuk" karena mesin salah label, TIDAK akan kena filter ini karena
+        // gap-nya jauh di atas 1 jam, dan tetap diproses normal di bawah.)
+        // ==========================================
+        if (prevEvent !== null && a.status === prevEvent.status) {
+            var gapDuplikat = (dtCurrent.getTime() - prevEvent.dt.getTime()) / (1000 * 60 * 60);
+            if (gapDuplikat >= 0 && gapDuplikat < HR_CONFIG.BATAS_WAKTU.DUPLIKAT_STATUS) {
+                hasil.push([a.nama, a.waktuStr, a.status, "", "", "", "Mengulang - Status Sama Berurutan (Diabaikan)"]);
+                warnaBaris(currentColor);
+                prevEvent = { dt: dtCurrent, status: a.status };
+                continue; // skip absen ini, trackerMasuk TIDAK disentuh
+            }
+        }
+        prevEvent = { dt: dtCurrent, status: a.status };
 
         var isMasukStr = a.status.includes("MASUK");
 
@@ -140,10 +179,24 @@ function prosesDataAbsensiServer(dataArray) {
                 var isLemburBebas = (isLemburBebasMasuk || a.pengecualian === "LEMBUR BEBAS");
 
                 if (diffHours < HR_CONFIG.BATAS_WAKTU.MIN_SHIFT) {
-                    // Lembur Singkat: Tanpa istirahat, round 0.25
-                    outLembur = Math.round(diffHours * 4) / 4;
-                    outTotal = outLembur;
-                    ket = "Lembur Singkat " + (ket ? "("+ket+")" : "");
+                    // ==========================================
+                    // Aturan D - Lembur Singkat
+                    // FIX #4: pembulatan pakai bulatkanKe30Menit() (bukan round ke 0.25)
+                    // FIX #5: jika hasilnya 0 (sisa <=15 menit), tandai "Tidak Dihitung"
+                    //         dan JANGAN masuk ke akumulasi total / Jam Kerja Total.
+                    // ==========================================
+                    var menitLemburKasar = diffHours * 60;
+                    var menitLemburEfektif = bulatkanKe30Menit(menitLemburKasar);
+
+                    if (menitLemburEfektif === 0) {
+                        outLembur = "";
+                        outTotal = "";
+                        ket = "Tidak Dihitung (Lembur < 15 Menit)" + (ket ? " - " + ket : "");
+                    } else {
+                        outLembur = menitLemburEfektif / 60;
+                        outTotal = outLembur;
+                        ket = "Lembur Singkat" + (ket ? " (" + ket + ")" : "");
+                    }
                 } else {
                     // Aturan A: Jam Masuk Efektif
                     var mDecimal = jamToDecimal(dtMasuk);
@@ -156,10 +209,21 @@ function prosesDataAbsensiServer(dataArray) {
                         else baseStart = nightDecimal; 
                     }
 
-                    // Aturan B: Jam Keluar Efektif (Round 0.5)
+                    // ==========================================
+                    // Aturan B - Jam Keluar Efektif
+                    // FIX #1: koreksi lintas-tengah-malam pakai selisih HARI murni,
+                    //         bukan perbandingan Date penuh (yang nyaris tidak pernah
+                    //         bernilai true untuk shift malam yang valid).
+                    // FIX #3: pembulatan pakai bulatkanKe30Menit() (tie 15 menit turun),
+                    //         bukan Math.round() bawaan (tie 15 menit naik).
+                    // ==========================================
                     var kDecimal = jamToDecimal(dtKeluar);
-                    if (dtKeluar < dtMasuk) kDecimal += 24; 
-                    var endEffective = Math.round(kDecimal * 2) / 2;
+                    var dayDiff = Math.round((stripTime(dtKeluar) - stripTime(dtMasuk)) / 86400000);
+                    kDecimal += dayDiff * 24;
+
+                    var menitKeluarKasar = kDecimal * 60;
+                    var menitKeluarEfektif = bulatkanKe30Menit(menitKeluarKasar);
+                    var endEffective = menitKeluarEfektif / 60;
 
                     // Aturan E: Istirahat
                     var potongIstirahat = HR_CONFIG.ISTIRAHAT.NORMAL;
