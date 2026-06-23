@@ -5,16 +5,16 @@ function doGet() {
 }
 
 // ==========================================
-// ⚙️ KONFIGURASI HR & PAYROLL 
+// ⚙️ KONFIGURASI HR & PAYROLL  (v3 - + Fix #6)
 // ==========================================
 var HR_CONFIG = {
     WORKDAY: { 0: false, 1: true, 2: true, 3: true, 4: true, 5: true, 6: false },
     ISTIRAHAT: { NORMAL: 1.0, JUMAT: 1.5 },
     BATAS_WAKTU: {
-        DOUBLE_SCAN: 0.08, // 5 Menit (Jika < 5 menit dianggap Mengulang)
-        DUPLIKAT_STATUS: 1.0, // 1 Jam (Status sama berurutan)
-        MIN_SHIFT: 4.0,    // Batas bawah Shift Normal
-        MAX_SHIFT: 16.0    // Batas atas sebelum dianggap Lupa Absen Keluar
+        DOUBLE_SCAN: 0.08,        // 5 Menit (Jika < 5 menit dianggap Mengulang)
+        DUPLIKAT_STATUS: 1.0,     // 1 Jam (Status sama berurutan)
+        MIN_SHIFT: 4.0,           // Batas bawah Shift Normal
+        MAX_SHIFT: 16.0           // Batas atas sebelum dianggap Lupa Absen Keluar
     },
     MAKS_JK: 8 // Maksimal Jam Kerja normal
 };
@@ -97,8 +97,6 @@ function prosesDataAbsensiServer(dataArray) {
     for (var n = 0; n < urutanNama.length; n++) {
       var namaKaryawan = urutanNama[n];
       var absenKaryawan = dataPerNama[namaKaryawan];
-      
-      // Validasi status kontrak menggunakan array yang diambil dari Sheet
       var isKontrak = (KARYAWAN_KONTRAK.indexOf(namaKaryawan.toUpperCase()) !== -1);
 
       hasil.push(["Nama", "Waktu", "Status", "Jam Kerja Total", "JK", "Lembur", "Keterangan"]);
@@ -115,7 +113,6 @@ function prosesDataAbsensiServer(dataArray) {
         var tglCekStr = a.waktuStr.split(' ')[0];
         var dayIndex = dtCurrent.getDay();
         
-        // LOGIKA WARNA (Murni Berdasarkan Kalender)
         var isHariKerja = HR_CONFIG.WORKDAY[dayIndex];
         var isTanggalMerah = cacheLibur[tglCekStr] || false;
         var isHariLibur = (!isHariKerja || isTanggalMerah); 
@@ -171,8 +168,15 @@ function prosesDataAbsensiServer(dataArray) {
                 var dtKeluar = dtCurrent;
                 
                 var outTotal = 0, outJk = "", outLembur = "", ket = a.pengecualian;
-                var isLemburBebasMasuk = (trackerMasuk.a.pengecualian === "LEMBUR BEBAS");
-                var isLemburBebas = (isLemburBebasMasuk || a.pengecualian === "LEMBUR BEBAS");
+
+                // ==========================================
+                // FIX #6 - "Lembur Bebas" HANYA relevan untuk hari LIBUR
+                // (mengizinkan non-kontrak tetap dibayar lembur di hari libur).
+                // Tag ini TIDAK BOLEH lagi membypass cap 8 jam ataupun istirahat
+                // Jumat pada HARI KERJA NORMAL - itu yang menyebabkan hampir semua
+                // baris jatuh ke kolom Lembur padahal harusnya JK.
+                // ==========================================
+                var isLemburBebas = (trackerMasuk.a.pengecualian === "LEMBUR BEBAS" || a.pengecualian === "LEMBUR BEBAS");
 
                 if (diffHours < HR_CONFIG.BATAS_WAKTU.MIN_SHIFT) {
                     var menitLemburKasar = diffHours * 60;
@@ -209,8 +213,10 @@ function prosesDataAbsensiServer(dataArray) {
                     var endEffective = menitKeluarEfektif / 60;
 
                     // Aturan E: Istirahat
+                    // FIX #6: Jumat 1.5 jam berlaku murni berdasarkan kalender,
+                    // TIDAK lagi disuppress oleh tag "Lembur Bebas".
                     var potongIstirahat = HR_CONFIG.ISTIRAHAT.NORMAL;
-                    if (trackerMasuk.isJum && !trackerMasuk.isLibur && !isLemburBebasMasuk) {
+                    if (trackerMasuk.isJum && !trackerMasuk.isLibur) {
                         potongIstirahat = HR_CONFIG.ISTIRAHAT.JUMAT;
                     }
 
@@ -220,10 +226,12 @@ function prosesDataAbsensiServer(dataArray) {
 
                     outTotal = jkKotor;
 
-                    // Pemisahan JK & Lembur
-                    if (trackerMasuk.isLibur || isLemburBebas) {
+                    // FIX #6: cap 8 jam HANYA dibypass kalau ini memang HARI LIBUR ASLI
+                    // (Sabtu/Minggu/Tanggal Merah). Tag "Lembur Bebas" di hari kerja
+                    // normal TIDAK mengubah apa pun - tetap JK(maks 8) + Lembur(sisa).
+                    if (trackerMasuk.isLibur) {
                         if (isKontrak || isLemburBebas) {
-                            outLembur = jkKotor;
+                            outLembur = jkKotor; 
                         } else {
                             ket = "Abaikan - Libur (Non-Kontrak)";
                             outTotal = ""; 
