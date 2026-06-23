@@ -1,78 +1,85 @@
-# Dokumentasi Sistem Automasi Rekap & Payroll
+# Dokumentasi Sistem Automasi Rekap & Payroll (Final)
 **PT. Perfect Garmen Accessories**
 
-Sistem ini berbasis Google Apps Script (App Script) yang dirancang untuk mengotomatisasi ekstraksi, pembersihan, dan perhitungan data absensi mentah dari mesin sidik jari (*fingerprint*) menjadi laporan *payroll* (penggajian) yang matang, lengkap dengan pemisahan Jam Kerja (JK) standar dan Lembur.
+Sistem ini adalah aplikasi berbasis web (Google Apps Script) yang memproses data mentah absensi dari mesin sidik jari menjadi laporan *payroll* Excel yang matang. Sistem ini dilengkapi dengan antarmuka kalender interaktif untuk HRD, sistem *failsafe* pendeteksi error mesin, dan pemisahan otomatis logika perhitungan antara Karyawan Kontrak (KK) dan Harian Lepas (HL).
 
 ---
 
 ## 1. Arsitektur Sistem
-Sistem ini terdiri dari dua file utama:
-* **`index.html` (Frontend):** Antarmuka pengguna (UI) berbasis web yang menggunakan *Tailwind CSS* untuk tata letak dan pustaka `xlsx.js` untuk mengurai file Excel mentah langsung di sisi klien (*browser*) sebelum dikirim ke server.
-* **`Kode.gs` (Backend):** Logika utama yang berjalan di server Google. Bertugas menerapkan aturan HR, perhitungan matematika *payroll*, deteksi anomali (*failsafe*), dan pembuatan/pewarnaan file Google Sheets output.
+Sistem terdiri dari dua komponen utama:
+1. **`Index.html` (Frontend / Antarmuka Pengguna):**
+   * Menggunakan *Tailwind CSS* untuk desain UI.
+   * Menggunakan pustaka `xlsx.js` (SheetJS) untuk membaca file Excel secara lokal di *browser* sebelum dikirim ke server.
+   * Memiliki fitur *UI Calendar Generation* otomatis yang mendeteksi hari Sabtu/Minggu berdasarkan data Excel, dan memungkinkan HRD menambah hari libur/cuti bersama secara rentang (*multi-date*).
+2. **`Kode.gs` (Backend / Server):**
+   * Berjalan di ekosistem Google Workspace.
+   * Menarik daftar Karyawan Kontrak (Sheet "KK") dan Harian Lepas (Sheet "HL") dari database pusat Google Sheets (`1sYQ6CQK8JAWEfUXxzf6OkdsTDcfHzRiOA_fOpxXWTyI`).
+   * Menjalankan algoritma pemisahan Jam Kerja (JK) dan Lembur, pembulatan waktu toleransi, dan *formatting* output Excel (Warna, *Border*, Legenda).
 
 ---
 
-## 2. Parameter Konfigurasi (`HR_CONFIG`)
-Konfigurasi dasar dapat disesuaikan pada bagian atas file `Kode.gs` tanpa mengubah logika inti program.
+## 2. Aturan Bisnis & Logika Perhitungan Waktu
 
-* **Hari Kerja:** Senin - Jumat (Sabtu dan Minggu non-aktif untuk karyawan reguler).
-* **Istirahat:** 1 Jam (Hari Normal) | 1.5 Jam (Hari Jumat).
-* **Batas Waktu (Failsafe):**
-    * `< 0.08 Jam (5 Menit)` = *Double Scan* (Abaikan).
-    * `< 4.0 Jam` = Lembur Singkat.
-    * `> 16.0 Jam` = Lupa Absen Keluar (Error).
-* **Maksimal Jam Kerja (JK):** 8 Jam per hari. Sisa durasi otomatis masuk ke Lembur.
+Sistem mematuhi SOP HRD dengan perhitungan matematis yang ketat:
 
----
+### A. Toleransi 15 Menit (Masuk & Keluar)
+* **Jam Masuk:** Telat `<= 15 menit` dibulatkan kembali ke jam pas (Aman). Telat `16 - 45 menit` dibulatkan menjadi telat setengah jam (30 menit). Telat `> 45 menit` dibulatkan ke jam berikutnya.
+* **Jam Keluar:** Pulang lebih cepat `< 15 menit` dibulatkan ke bawah ke jam pas (Potong setengah jam). Pulang lebih dari jam pas `<= 15 menit` dibulatkan ke jam pas (Tidak dihitung lembur/Aman).
 
-## 3. Algoritma & Aturan Bisnis (Business Rules)
+### B. Istirahat
+* **Hari Normal (Senin - Kamis):** Dipotong 1.0 Jam.
+* **Hari Jumat:** Dipotong 1.5 Jam.
+* **Hari Libur/Sabtu/Minggu:** Dipotong 1.0 Jam (kecuali untuk KK yang aturan lemburnya berbeda).
 
-Program ini memproses data berdasarkan pembacaan kronologis (baris demi baris) dengan **Kolom Status (C/Masuk atau C/Keluar) sebagai pemicu utama**, didukung oleh validasi waktu.
+### C. Pemisahan Logika KK vs HL
+Sistem membaca identitas karyawan dari database dan menerapkan perlakuan yang berbeda:
+1. **Hari Kerja Normal (Senin - Jumat):**
+   * **KK (Kontrak):** Jika kerja bersih `< 4 Jam` = Dianggap **IZIN** (Total/JK/Lembur = 0, tidak dihitung hari kerja). Jika `>= 4 Jam` = Hadir (Maks 8 Jam JK, sisa Lembur).
+   * **HL (Harian Lepas):** Dibayar sesuai aktual. Berapa pun jam kerjanya (misal 3 jam), akan masuk ke kolom JK dengan status **Kerja Singkat (HL)**. Maksimal JK 8 Jam, sisa Lembur.
+2. **Hari Libur (Sabtu / Minggu / Tanggal Merah):**
+   * **KK (Kontrak):** Seluruh jam kerja langsung masuk *full* ke kolom **LEMBUR**. Kolom JK kosong (0).
+   * **HL (Harian Lepas):** Tetap mengisi **JK** terlebih dahulu (Maksimal 8 Jam), barulah sisanya masuk ke kolom Lembur.
 
-### A. Aturan Jam Masuk Efektif (*Early In Restriction*)
-Karyawan yang datang lebih awal tidak mendapatkan tambahan jam kerja/lembur.
-* Shift Pagi: Datang `≤ 08:00` $\rightarrow$ Dihitung masuk `08:00`. Datang `> 08:00` $\rightarrow$ Dihitung sesuai jam aktual.
-* Shift Malam: Datang `≤ 20:00` $\rightarrow$ Dihitung masuk `20:00`. Datang `> 20:00` $\rightarrow$ Dihitung sesuai jam aktual.
-
-### B. Aturan Jam Keluar Efektif (*Floor Rounding*)
-Jam keluar aktual dibulatkan ke bawah (*floor*) ke interval 30 menit (0.5 jam) terdekat untuk mempermudah perhitungan *payroll*.
-* *Rumus:* `Math.round(Jam Keluar Aktual * 2) / 2`
-
-### C. Aturan Lembur Singkat (*Short Overtime*)
-Jika rentang waktu absen Masuk dan Keluar **kurang dari 4 jam**, sistem menganggapnya sebagai lembur singkat/tambahan (bukan shift penuh).
-* Tidak ada pemotongan jam istirahat.
-* Durasi dibulatkan ke interval 15 menit (0.25 jam) terdekat.
-
-### D. Aturan Karyawan Kontrak & Hari Libur
-Sistem membedakan perlakuan berdasarkan hari kalender (API Kalender Nasional) dan status pegawai.
-* **Karyawan Kontrak:** Jika bekerja pada hari Sabtu, Minggu, atau Tanggal Merah, nilai Jam Kerja (JK) dikosongkan (0), dan **seluruh durasi kerja dilempar ke kolom Lembur**.
-* **Karyawan Non-Kontrak:** Diabaikan jika absen di hari libur.
-* **Status "LEMBUR BEBAS":** Jika kolom keterangan berbunyi "LEMBUR BEBAS", sistem akan memaksa perhitungan menjadi lembur total layaknya hari libur, tanpa mengubah warna baris kalender.
+### D. Deteksi "Lembur Singkat" vs "Izin"
+Sistem membedakan shift pendek (pulang sakit) dengan lembur malam dengan melihat pola:
+* Jika durasi `< 4 Jam`, namun karyawan memiliki jam masuk *"random"* (misal jam 13:00 atau jam 21:00), atau terdeteksi sudah memiliki shift normal sebelumnya di hari yang sama $\rightarrow$ Dihitung sebagai **Lembur Singkat**.
 
 ---
 
-## 4. Sistem Failsafe (Penanganan Anomali Mesin)
+## 3. Sistem Failsafe (Penanganan Anomali Mesin)
 
-Mesin sidik jari sering mengalami *human error* atau *auto-state error*. Sistem memiliki lapis pengamanan:
-1.  **Double Scan (< 5 Menit):** Jika ada dua absen berdekatan, absen kedua diabaikan (diberi status *"Mengulang"*).
-2.  **Mesin Salah Tebak Status:** Jika menemukan dua status "C/Masuk" namun jaraknya masuk akal (4 - 16 jam), sistem memaksa data kedua menjadi "C/Keluar" yang sah.
-3.  **Lupa Absen Pulang (> 16 Jam):** Jika jarak absen melebihi batas wajar manusia bekerja, baris diwarnai merah dengan keterangan *"LUPA ABSEN KELUAR (> 16 Jam)"*. Data baru dianggap sebagai *shift* hari berikutnya.
-4.  **Lanjutan Shift Bulan Lalu:** Jika ditemukan "C/Keluar" tanpa "C/Masuk" di baris **pertama** data seorang karyawan, sistem mengenalinya sebagai sisa shift malam dari bulan sebelumnya dan memberi keterangan *"Abaikan - Lanjutan Shift Bulan Sebelumnya"*.
+Mesin sering mencatat status yang salah (*human error*). Sistem menangani ini dengan:
+1. **Double Scan (< 5 Menit):** Absen berdekatan dicoret dan diberi status *"Mengulang (Abaikan)"*.
+2. **Duplikat Status (< 1 Jam):** Jika ada dua "C/MASUK" berurutan dalam waktu kurang dari 1 jam, absen kedua diabaikan.
+3. **Lupa Absen Pulang (> 16 Jam):** Jika jarak Masuk ke Keluar melampaui batas logis manusia bekerja (>16 jam), kolom JK & Lembur akan dikosongkan, baris diwarnai Merah, dan diberi status *"LUPA ABSEN KELUAR"*. HRD harus mengecek CCTV/manual.
+4. **Lanjutan Shift Bulan Lalu:** Jika data paling atas diawali dengan "C/KELUAR" tanpa "C/MASUK", sistem memakluminya sebagai shift malam dari bulan sebelumnya dan memberi status *"Abaikan - Lanjutan Shift"*.
+
+---
+
+## 4. Panduan Penggunaan Frontend (UI HRD)
+
+1. **Upload File:** Buka aplikasi web, klik kotak area upload, dan pilih file Excel mentah (`.xlsx` atau `.xls`) dari mesin sidik jari.
+2. **Konfigurasi Kalender (PENTING):**
+   * Sistem akan otomatis merender daftar Hari Sabtu dan Minggu berdasarkan bulan di file Excel tersebut.
+   * **Batal Libur:** Jika hari Sabtu tertentu ditetapkan sebagai hari kerja produksi, HRD cukup *menghilangkan centang (uncheck)* pada tanggal tersebut.
+   * **Tambah Cuti Bersama:** Gunakan form *"Tambah Libur / Cuti Bersama"*. Masukkan "Mulai Tanggal" dan "Sampai Tanggal" (opsional), isi keterangan, lalu klik Tambah.
+3. **Proses:** Klik tombol "Mulai Proses Algoritma Payroll". Sistem akan memuat data dengan *loading spinner*.
+4. **Download:** Setelah selesai, klik tombol Download Laporan (.xlsx) atau klik tautan "Buka di Google Sheets".
 
 ---
 
-## 5. Legenda Warna Output Laporan
+## 5. Tata Letak Output (Laporan Excel Akhir)
 
-Laporan Excel yang dihasilkan akan diwarnai secara otomatis untuk memudahkan audit visual oleh HRD:
-
-| Warna | Kode Hex | Arti | Logika Pemicu |
-| :--- | :--- | :--- | :--- |
-| **Putih** | `#FFFFFF` | Hari Kerja Normal | Senin - Kamis. |
-| **Kuning** | `#FFFF00` | Hari Jumat | Terdeteksi sebagai hari Jumat (Istirahat 1.5 jam). |
-| **Oranye** | `#FFC000` | Hari Libur | Sabtu, Minggu, atau Tanggal Merah Nasional. |
-| **Merah Pudar** | `#FFCCCC` | Error / Invalid | Lupa absen keluar, atau absen keluar tanpa absen masuk (kecuali awal bulan). |
-| **Hijau Pudar** | `#E2EFDA` | Total Akumulasi | Baris rekapitulasi total hari dan lembur di akhir data per karyawan. |
-| **Abu-abu** | `#E7E6E6` | Pemisah Karyawan | *Header* tabel untuk karyawan baru. |
+Excel yang dihasilkan akan diformat secara otomatis:
+* **Tabel Terpisah:** Setiap karyawan memiliki blok tabel dengan *border* penuh, dipisahkan dengan baris jeda putih, membuat laporan sangat rapi.
+* **Header Gelap:** Setiap awal tabel karyawan memiliki header warna gelap (`#3B3838`) dan *font* putih, disertai status tipe karyawan di sebelah namanya (contoh: `GUSTIO TRY MAHENDRA (KK)`).
+* **Desimal Terkunci:** Angka jam kerja maksimal 2 angka di belakang koma.
+* **Pewarnaan Baris (Berdasarkan Kalender):**
+  * `Putih`: Hari Kerja Normal.
+  * `Kuning`: Hari Jumat.
+  * `Oranye`: Hari Libur (Weekend / Tanggal Merah).
+  * `Merah Pudar`: Error / Invalid / Lupa Absen.
+* **Legenda:** Tabel legenda warna otomatis dibuat di pojok kanan atas untuk pedoman pembacaan.
 
 ---
-*Dokumen ini dibuat secara otomatis untuk keperluan operasional PT. Perfect Garmen Accessories. Terakhir diperbarui: Juni 2026.*
+*Dokumen ini dibuat untuk operasional PT. Perfect Garmen Accessories. Konfigurasi algoritma disesuaikan secara khusus pada Juni 2026.*
