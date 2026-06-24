@@ -10,16 +10,16 @@ function doGet() {
 var HR_CONFIG = {
     ISTIRAHAT: { NORMAL: 1.0, JUMAT: 1.5 },
     BATAS_WAKTU: {
-        DOUBLE_SCAN: 0.08, // 5 Menit
-        DUPLIKAT_STATUS: 1.0, // 1 Jam
-        MIN_SHIFT: 4.0,    // Batas bawah Shift Normal
-        MAX_SHIFT: 16.0    // Batas Lupa Absen Keluar
+        DOUBLE_SCAN: 0.08, 
+        DUPLIKAT_STATUS: 1.0, 
+        MIN_SHIFT: 4.0,    
+        MAX_SHIFT: 16.0    
     },
-    MAKS_JK: 8 // Maksimal Jam Kerja normal
+    MAKS_JK: 8 
 };
 
 // ==========================================
-// 🧠 HELPER: PEMBULATAN MATEMATIKA TOLERANSI HR
+// 🧠 HELPER SHARED UTILITY
 // ==========================================
 function parseWaktu(waktuStr) {
     var parts = waktuStr.split(' ');
@@ -60,23 +60,36 @@ function formatDesimal(val) {
 }
 
 // ==========================================
-// 🚀 MAIN PROCESSOR (CORE ALGORITHM)
+// 🚀 MAIN SWITCHER ROUTER
 // ==========================================
-function prosesDataAbsensiServer(dataArray, kalenderLibur) {
+function prosesDataAbsensiServer(dataArray, kalenderLibur, mode) {
   try {
+      if (mode === 'AUDIT') {
+          return prosesAudit(dataArray, kalenderLibur);
+      } else {
+          return prosesPayroll(dataArray, kalenderLibur);
+      }
+  } catch (error) {
+      return { status: 'error', message: error.toString() };
+  }
+}
+
+// ==========================================
+// 🛡️ ENGINE 1: PAYROLL (EXISTING - TIDAK DIUBAH)
+// ==========================================
+function prosesPayroll(dataArray, kalenderLibur) {
     var hasil = [];
     var warna = []; 
     var dataPerNama = {};
     var urutanNama = [];
 
-    // --- TAHAP 0: TARIK DATABASE KARYAWAN DARI GOOGLE SHEETS ---
     var idSheetDatabase = '1sYQ6CQK8JAWEfUXxzf6OkdsTDcfHzRiOA_fOpxXWTyI';
     var ssData = SpreadsheetApp.openById(idSheetDatabase);
     
     var sheetKK = ssData.getSheetByName("KK");
     var KARYAWAN_KONTRAK = [];
     if(sheetKK) {
-        var dataKK = sheetKK.getRange("B2:B32").getValues();
+        var dataKK = sheetKK.getRange("B2:B100").getValues();
         for(var r=0; r<dataKK.length; r++) {
             if(dataKK[r][0]) KARYAWAN_KONTRAK.push(String(dataKK[r][0]).trim().toUpperCase());
         }
@@ -85,13 +98,12 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
     var sheetHL = ssData.getSheetByName("HL");
     var KARYAWAN_HL = [];
     if(sheetHL) {
-        var dataHL = sheetHL.getRange("B2:B32").getValues();
+        var dataHL = sheetHL.getRange("B2:B100").getValues();
         for(var r=0; r<dataHL.length; r++) {
             if(dataHL[r][0]) KARYAWAN_HL.push(String(dataHL[r][0]).trim().toUpperCase());
         }
     }
 
-    // --- TAHAP 1: SETUP KALENDER LIBUR (DARI FRONTEND UI) ---
     var cacheLibur = {}; 
     if (kalenderLibur && kalenderLibur.length > 0) {
         for (var i = 0; i < kalenderLibur.length; i++) {
@@ -101,7 +113,6 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
         }
     }
 
-    // --- TAHAP 2: GROUPING DATA ---
     for (var i = 1; i < dataArray.length; i++) {
       var row = dataArray[i];
       if (!row || row.length < 3 || !row[0]) continue;
@@ -117,7 +128,6 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
 
     function warnaBaris(hex) { warna.push([hex, hex, hex, hex, hex, hex, hex]); }
 
-    // --- TAHAP 3: ALGORITMA PAYROLL ---
     for (var n = 0; n < urutanNama.length; n++) {
       var namaKaryawan = urutanNama[n];
       var absenKaryawan = dataPerNama[namaKaryawan];
@@ -189,7 +199,6 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
             else {
                 var dtMasuk = trackerMasuk.dt;
                 var dtKeluar = dtCurrent;
-                
                 var outTotal = "", outJk = "", outLembur = "";
                 var baseKet = a.pengecualian ? a.pengecualian + " | " : "";
                 var ket = "";
@@ -202,7 +211,6 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
                         ket = baseKet + "Tidak Dihitung (< 15 Menit)";
                     } else {
                         var jamEfektif = menitLemburEfektif / 60;
-                        
                         var mDecimalKasar = jamToDecimal(dtMasuk);
                         var isRandomStart = false;
                         if ((mDecimalKasar >= 9.0 && mDecimalKasar <= 18.0) || (mDecimalKasar >= 21.0 || mDecimalKasar <= 4.0)) {
@@ -258,20 +266,16 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
                     var jkKotor = endEffective - baseStart - potongIstirahat;
                     if (jkKotor < 0) jkKotor = 0;
 
-                    // LOGIKA UTAMA KK vs HL
                     if (isKK && jkKotor < 4 && !trackerMasuk.isLibur) {
                         outTotal = ""; outJk = 0; outLembur = 0;
                         ket = baseKet + "Izin (Kerja < 4 Jam Bersih)";
                     } 
                     else {
                         outTotal = jkKotor;
-
-                        // Jika HARI LIBUR dan berstatus KK -> FULL LEMBUR
                         if (trackerMasuk.isLibur && isKK) {
                             outLembur = jkKotor;
                             outJk = "";
                         } 
-                        // Jika HARI NORMAL (Siapapun) ATAU HARI LIBUR (Status HL) -> MAKS JK 8, SISA LEMBUR
                         else {
                             if (jkKotor > HR_CONFIG.MAKS_JK) {
                                 outJk = HR_CONFIG.MAKS_JK;
@@ -280,13 +284,11 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
                                 outJk = jkKotor;
                             }
                         }
-                        
                         ket = baseKet + "Hadir";
                     }
                 }
 
                 if (!ket && baseKet) ket = a.pengecualian; 
-
                 outTotal = formatDesimal(outTotal);
                 outJk = formatDesimal(outJk);
                 outLembur = formatDesimal(outLembur);
@@ -296,7 +298,6 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
 
                 hasil.push([a.nama, a.waktuStr, a.status, outTotal, outJk, outLembur, ket]);
                 warnaBaris(currentColor);
-
                 trackerMasuk = null;
             }
         }
@@ -312,26 +313,213 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
       
       hasil.push(["", "", "", teksHari, "", totalAkhirLembur, "TOTAL AKUMULASI"]);
       warnaBaris("#E2EFDA"); 
-      
       hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
       hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
     }
 
-    var fileBaruId = simpanDanWarnai(hasil, warna);
+    var fileBaruId = simpanDanWarnai(hasil, warna, 'PAYROLL');
     var linkDrive = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/edit";
     var linkDownload = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/export?format=xlsx";
 
     return { status: 'success', driveUrl: linkDrive, downloadUrl: linkDownload };
-  } catch (error) {
-    return { status: 'error', message: error.toString() };
-  }
+}
+
+// ==========================================
+// 🕵️‍♂️ ENGINE 2: AUDIT (ENGINE BARU)
+// ==========================================
+function prosesAudit(dataArray, kalenderLibur) {
+    var hasil = [];
+    var warna = []; 
+
+    // 1. Ambil DB Audit
+    var idSheetDatabase = '1sYQ6CQK8JAWEfUXxzf6OkdsTDcfHzRiOA_fOpxXWTyI';
+    var ssData = SpreadsheetApp.openById(idSheetDatabase);
+    
+    function getDept(sheetName) {
+        var s = ssData.getSheetByName(sheetName);
+        if (!s) return [];
+        var vals = s.getRange("B2:B100").getValues();
+        return vals.map(function(r) { return String(r[0]).trim().toUpperCase() }).filter(function(v) { return v; });
+    }
+
+    var deptHB = getDept("HB");
+    var deptRJ = getDept("RJ");
+    var deptEL = getDept("EL");
+    var deptLainnya = getDept("Lainnya");
+
+    // 2. Mapping Libur
+    var cacheLibur = {}; 
+    if (kalenderLibur && kalenderLibur.length > 0) {
+        for (var i = 0; i < kalenderLibur.length; i++) {
+            if (kalenderLibur[i].aktif) cacheLibur[kalenderLibur[i].tanggal] = true;
+        }
+    }
+
+    // 3. AUTO-DETEKSI BULAN UTAMA (Mencegah lintas bulan seperti tgl 1 bulan berikutnya)
+    var monthCounts = {};
+    var maxCount = 0;
+    var targetMonthStr = "";
+    
+    for(var i = 1; i < dataArray.length; i++){
+        var row = dataArray[i];
+        if(!row || row.length < 3 || !row[0]) continue;
+        var tglFull = String(row[1]).split(' ')[0]; 
+        var parts = tglFull.split('/');
+        if(parts.length >= 3) {
+            var mStr = parts[1] + "/" + parts[2]; // Ambil Format MM/YYYY
+            if(!monthCounts[mStr]) monthCounts[mStr] = 0;
+            monthCounts[mStr]++;
+            if(monthCounts[mStr] > maxCount) {
+                maxCount = monthCounts[mStr];
+                targetMonthStr = mStr; // Bulan paling dominan di file ini
+            }
+        }
+    }
+
+    // 4. Ekstraksi Unik & Buang Libur serta Lintas Bulan
+    var rawEmpDays = {}; 
+    var allDatesSet = {};
+    for(var i = 1; i < dataArray.length; i++){
+        var row = dataArray[i];
+        if(!row || row.length < 3 || !row[0]) continue;
+        var nama = String(row[0]).trim().toUpperCase();
+        var tgl = String(row[1]).split(' ')[0];
+        
+        // FILTER: Buang tanggal 1 di bulan berikutnya / Lintas bulan
+        var tglParts = tgl.split('/');
+        if(tglParts.length >= 3 && (tglParts[1] + "/" + tglParts[2]) !== targetMonthStr) {
+            continue; 
+        }
+        
+        if(!rawEmpDays[nama]) rawEmpDays[nama] = {};
+        rawEmpDays[nama][tgl] = true;
+        allDatesSet[tgl] = true;
+    }
+
+    var validDates = [];
+    for(var d in allDatesSet) {
+        if(!cacheLibur[d]) validDates.push(d); 
+    }
+
+    // 5. Generate Jadwal Lembur Random Per Dept (2-3 kali sebulan)
+    function pickRandomDays(arr, count) {
+        var shuffled = arr.slice().sort(function(){return 0.5 - Math.random()});
+        return shuffled.slice(0, count);
+    }
+
+    var countHB = Math.floor(Math.random() * 2) + 2;
+    var countRJ = Math.floor(Math.random() * 2) + 2;
+    var countEL = Math.floor(Math.random() * 2) + 2;
+
+    var otHB = pickRandomDays(validDates, countHB);
+    var otRJ = pickRandomDays(validDates, countRJ);
+    var otEL = pickRandomDays(validDates, countEL);
+
+    var masterOTSet = {};
+    otHB.forEach(function(d){ masterOTSet[d] = true; });
+    otRJ.forEach(function(d){ masterOTSet[d] = true; });
+    otEL.forEach(function(d){ masterOTSet[d] = true; });
+    var allMasterOT = Object.keys(masterOTSet);
+
+    function warnaBaris(hex) { warna.push([hex, hex, hex, hex, hex, hex, hex]); }
+
+    // 6. Normalisasi & Generate Output
+    var sortedNames = Object.keys(rawEmpDays).sort();
+
+    for(var n = 0; n < sortedNames.length; n++) {
+        var nama = sortedNames[n];
+        var dept = "Unknown";
+        if(deptHB.indexOf(nama) > -1) dept = "HB";
+        else if(deptRJ.indexOf(nama) > -1) dept = "RJ";
+        else if(deptEL.indexOf(nama) > -1) dept = "EL";
+        else if(deptLainnya.indexOf(nama) > -1) dept = "Lainnya";
+
+        if(dept === "Unknown") {
+            continue; 
+        }
+
+        var otPersonLainnya = [];
+        if (dept === "Lainnya" && allMasterOT.length > 0) {
+            var countLainnya = Math.floor(Math.random() * 2) + 2; 
+            otPersonLainnya = pickRandomDays(allMasterOT, Math.min(countLainnya, allMasterOT.length));
+        }
+
+        hasil.push([nama + " (" + dept + ")", "Waktu", "Status", "Jam Kerja Total", "JK", "Lembur", "Keterangan"]);
+        warnaBaris("#3B3838");
+
+        var tgls = Object.keys(rawEmpDays[nama]).sort(function(a, b){
+            var aa = parseWaktu(a + " 00.00").getTime();
+            var bb = parseWaktu(b + " 00.00").getTime();
+            return aa - bb;
+        });
+
+        var totalHari = 0;
+        var totalLembur = 0;
+
+        for(var t = 0; t < tgls.length; t++) {
+            var tgl = tgls[t];
+            
+            if(cacheLibur[tgl]) continue; 
+
+            var dtObj = parseWaktu(tgl + " 00.00");
+            var isJumat = dtObj.getDay() === 5;
+            var currentColor = isJumat ? "#FFFF00" : "#FFFFFF";
+
+            var lemburDur = 0;
+            if(dept === "HB" && otHB.indexOf(tgl) > -1) lemburDur = 3;
+            else if(dept === "RJ" && otRJ.indexOf(tgl) > -1) lemburDur = 3;
+            else if(dept === "EL" && otEL.indexOf(tgl) > -1) lemburDur = 3;
+            else if(dept === "Lainnya" && otPersonLainnya.indexOf(tgl) > -1) {
+                var opts = [1, 1.5, 2];
+                lemburDur = opts[Math.floor(Math.random() * opts.length)];
+            }
+
+            var minIn = Math.floor(Math.random() * 16) + 50; 
+            var hIn = 7;
+            if(minIn >= 60) { hIn = 8; minIn -= 60; }
+            var strIn = tgl + " 0" + hIn + "." + (minIn < 10 ? "0" + minIn : minIn);
+
+            var minOutBase = isJumat ? (Math.floor(Math.random() * 11) + 30) : Math.floor(Math.random() * 11);
+            var hOutBase = 17;
+
+            var addMins = lemburDur * 60;
+            var totalMinOut = minOutBase + addMins;
+            var hOutFinal = hOutBase + Math.floor(totalMinOut / 60);
+            var mOutFinal = totalMinOut % 60;
+            var strOut = tgl + " " + hOutFinal + "." + (mOutFinal < 10 ? "0" + mOutFinal : mOutFinal);
+
+            var infoKet = "OK"; 
+
+            hasil.push([nama, strIn, "C/MASUK", "", "", "", infoKet]);
+            warnaBaris(currentColor);
+
+            var totalJK = 8 + lemburDur;
+            hasil.push([nama, strOut, "C/KELUAR", totalJK, 8, lemburDur || "", infoKet]);
+            warnaBaris(currentColor);
+
+            totalHari++;
+            totalLembur += lemburDur;
+        }
+
+        hasil.push(["", "", "", totalHari + " hari", "", totalLembur || "", "TOTAL AKUMULASI"]);
+        warnaBaris("#E2EFDA");
+        hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
+        hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
+    }
+
+    var fileBaruId = simpanDanWarnai(hasil, warna, 'AUDIT');
+    var linkDrive = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/edit";
+    var linkDownload = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/export?format=xlsx";
+
+    return { status: 'success', driveUrl: linkDrive, downloadUrl: linkDownload };
 }
 
 // ==========================================
 // 🎨 WRITER: MENYIMPAN, MEWARNAI & MEMBUAT LEGENDA
 // ==========================================
-function simpanDanWarnai(values, backgrounds) {
-  var namaFile = "Laporan Rekap & Payroll - " + Utilities.formatDate(new Date(), "Asia/Jakarta", "dd-MM-yyyy HH:mm");
+function simpanDanWarnai(values, backgrounds, mode) {
+  var prefix = mode === 'AUDIT' ? "Laporan Audit - " : "Laporan Payroll - ";
+  var namaFile = prefix + Utilities.formatDate(new Date(), "Asia/Jakarta", "dd-MM-yyyy HH:mm");
   var ss = SpreadsheetApp.create(namaFile);
   var sheet = ss.getActiveSheet();
   
@@ -374,13 +562,22 @@ function simpanDanWarnai(values, backgrounds) {
   var legendColText = 9;   
   var legendColColor = 10; 
 
-  var legends = [
-    { text: "Normal (Hari Kerja)", color: "#FFFFFF" },
-    { text: "Jumat (Istirahat 1.5 Jam)", color: "#FFFF00" },
-    { text: "Sabtu/Minggu/Tgl Merah", color: "#FFC000" },
-    { text: "Error / Invalid Absen", color: "#FFCCCC" },
-    { text: "Total Akumulasi", color: "#E2EFDA" }
-  ];
+  var legends = [];
+  if (mode === 'AUDIT') {
+      legends = [
+        { text: "Shift Pagi (Normal)", color: "#FFFFFF" },
+        { text: "Jumat", color: "#FFFF00" },
+        { text: "Total Akumulasi", color: "#E2EFDA" }
+      ];
+  } else {
+      legends = [
+        { text: "Normal (Hari Kerja)", color: "#FFFFFF" },
+        { text: "Jumat (Istirahat 1.5 Jam)", color: "#FFFF00" },
+        { text: "Sabtu/Minggu/Tgl Merah", color: "#FFC000" },
+        { text: "Error / Invalid Absen", color: "#FFCCCC" },
+        { text: "Total Akumulasi", color: "#E2EFDA" }
+      ];
+  }
 
   sheet.getRange(legendRow, legendColText, 1, 2).merge()
        .setValue("LEGENDA WARNA")
