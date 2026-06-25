@@ -355,7 +355,7 @@ function prosesAudit(dataArray, kalenderLibur) {
         }
     }
 
-    // 3. AUTO-DETEKSI BULAN UTAMA (Mencegah lintas bulan seperti tgl 1 bulan berikutnya)
+    // 3. AUTO-DETEKSI BULAN UTAMA
     var monthCounts = {};
     var maxCount = 0;
     var targetMonthStr = "";
@@ -366,12 +366,12 @@ function prosesAudit(dataArray, kalenderLibur) {
         var tglFull = String(row[1]).split(' ')[0]; 
         var parts = tglFull.split('/');
         if(parts.length >= 3) {
-            var mStr = parts[1] + "/" + parts[2]; // Ambil Format MM/YYYY
+            var mStr = parts[1] + "/" + parts[2]; 
             if(!monthCounts[mStr]) monthCounts[mStr] = 0;
             monthCounts[mStr]++;
             if(monthCounts[mStr] > maxCount) {
                 maxCount = monthCounts[mStr];
-                targetMonthStr = mStr; // Bulan paling dominan di file ini
+                targetMonthStr = mStr; 
             }
         }
     }
@@ -385,7 +385,6 @@ function prosesAudit(dataArray, kalenderLibur) {
         var nama = String(row[0]).trim().toUpperCase();
         var tgl = String(row[1]).split(' ')[0];
         
-        // FILTER: Buang tanggal 1 di bulan berikutnya / Lintas bulan
         var tglParts = tgl.split('/');
         if(tglParts.length >= 3 && (tglParts[1] + "/" + tglParts[2]) !== targetMonthStr) {
             continue; 
@@ -401,7 +400,7 @@ function prosesAudit(dataArray, kalenderLibur) {
         if(!cacheLibur[d]) validDates.push(d); 
     }
 
-    // 5. Generate Jadwal Lembur Random Per Dept (2-3 kali sebulan)
+    // 5. Generate Jadwal Lembur Random Per Dept
     function pickRandomDays(arr, count) {
         var shuffled = arr.slice().sort(function(){return 0.5 - Math.random()});
         return shuffled.slice(0, count);
@@ -440,7 +439,7 @@ function prosesAudit(dataArray, kalenderLibur) {
 
         var otPersonLainnya = [];
         if (dept === "Lainnya" && allMasterOT.length > 0) {
-            var countLainnya = Math.floor(Math.random() * 2) + 2; 
+            var countLainnya = Math.floor(Math.random() * 4); // Acak 0, 1, 2, 3 hari
             otPersonLainnya = pickRandomDays(allMasterOT, Math.min(countLainnya, allMasterOT.length));
         }
 
@@ -470,15 +469,22 @@ function prosesAudit(dataArray, kalenderLibur) {
             else if(dept === "RJ" && otRJ.indexOf(tgl) > -1) lemburDur = 3;
             else if(dept === "EL" && otEL.indexOf(tgl) > -1) lemburDur = 3;
             else if(dept === "Lainnya" && otPersonLainnya.indexOf(tgl) > -1) {
-                var opts = [1, 1.5, 2];
+                var opts = [0.5, 1, 1.5, 2, 2.5, 3];
                 lemburDur = opts[Math.floor(Math.random() * opts.length)];
             }
 
-            var minIn = Math.floor(Math.random() * 16) + 50; 
+            // MAKSIMAL LEMBUR JUMAT 2.5 JAM
+            if (isJumat && lemburDur > 2.5) {
+                lemburDur = 2.5;
+            }
+
+            // --- GENERATE JAM MASUK (07:46 - 08:00) ---
+            var minIn = Math.floor(Math.random() * 15) + 46; // Random 46 hingga 60
             var hIn = 7;
             if(minIn >= 60) { hIn = 8; minIn -= 60; }
             var strIn = tgl + " 0" + hIn + "." + (minIn < 10 ? "0" + minIn : minIn);
 
+            // GENERATE JAM PULANG BASE (Jumat 17:30-40, Normal 17:00-10)
             var minOutBase = isJumat ? (Math.floor(Math.random() * 11) + 30) : Math.floor(Math.random() * 11);
             var hOutBase = 17;
 
