@@ -82,4 +82,22 @@ Excel yang dihasilkan akan diformat secara otomatis:
 * **Legenda:** Tabel legenda warna otomatis dibuat di pojok kanan atas untuk pedoman pembacaan.
 
 ---
+
+## 6. Konteks Khusus (Sistem Perusahaan Sebelah)
+
+Repositori ini juga memuat dua file dengan penamaan `digi` yaitu:
+* `Index.digi.html`
+* `digi.gs`
+
+**Perhatian:** Kedua file tersebut adalah kode khusus yang diperuntukkan bagi **Perusahaan Sebelah** yang memiliki aturan bisnis absensi yang berbeda. File-file tersebut berjalan terpisah dari sistem utama PGA (`index.html` dan `Kode.gs`). Jangan mencampur-adukkan logika di dalam `digi` dengan sistem utama PGA.
+
+---
+
+## 7. Folder Dokumentasi (`Docs/`)
+
+Selain README utama ini, dokumentasi pendukung diletakkan di dalam folder `Docs/`:
+* **Dokumentasi Aktif:** File seperti `AUDIT-ENGINE.md` yang berisi detail fitur terbaru.
+* **Arsip Historis:** Dokumentasi mengenai _trial & error_ lama dan sejarah perbaikan (_bug fixes_) dari masa-masa awal telah dikelompokkan ke dalam folder `Docs/Fix_Bug_Jaman_Dulu/` agar tidak membingungkan pengguna baru.
+
+---
 *Dokumen ini dibuat untuk operasional PT. Perfect Garmen Accessories. Konfigurasi algoritma disesuaikan secara khusus pada Juni 2026.*
