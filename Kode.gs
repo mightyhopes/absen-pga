@@ -75,7 +75,7 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur, mode) {
 }
 
 // ==========================================
-// 🛡️ ENGINE 1: PAYROLL (EXISTING - TIDAK DIUBAH)
+// 🛡️ ENGINE 1: PAYROLL (EXISTING - TERMASUK FIX BUG #1)
 // ==========================================
 function prosesPayroll(dataArray, kalenderLibur) {
     var hasil = [];
@@ -160,7 +160,8 @@ function prosesPayroll(dataArray, kalenderLibur) {
 
         if (prevEvent !== null && a.status === prevEvent.status) {
             var gapDuplikat = (dtCurrent.getTime() - prevEvent.dt.getTime()) / (1000 * 60 * 60);
-            if (gapDuplikat >= 0 && gapDuplikat < HR_CONFIG.BATAS_WAKTU.DUPLIKAT_STATUS) {
+            // FIX BUG #1: gapDuplikat > 0 (Mencegah baris yang di-replay membuang dirinya sendiri)
+            if (gapDuplikat > 0 && gapDuplikat < HR_CONFIG.BATAS_WAKTU.DUPLIKAT_STATUS) {
                 hasil.push([a.nama, a.waktuStr, a.status, "", "", "", "Mengulang - Diabaikan"]);
                 warnaBaris(currentColor);
                 prevEvent = { dt: dtCurrent, status: a.status };
@@ -194,6 +195,7 @@ function prosesPayroll(dataArray, kalenderLibur) {
                 hasil[trackerMasuk.rowIndex][6] = "LUPA ABSEN KELUAR (> 16 Jam)";
                 warna[trackerMasuk.rowIndex] = ["#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC"];
                 trackerMasuk = null; 
+                // Karena Bug #1 sudah di-fix di atas, replay (k--) di bawah ini 100% AMAN
                 k--; continue;
             } 
             else {
@@ -325,7 +327,7 @@ function prosesPayroll(dataArray, kalenderLibur) {
 }
 
 // ==========================================
-// 🕵️‍♂️ ENGINE 2: AUDIT (ENGINE BARU)
+// 🕵️‍♂️ ENGINE 2: AUDIT (ENGINE BARU PGA)
 // ==========================================
 function prosesAudit(dataArray, kalenderLibur) {
     var hasil = [];
@@ -346,8 +348,15 @@ function prosesAudit(dataArray, kalenderLibur) {
     var deptRJ = getDept("RJ");
     var deptEL = getDept("EL");
     var deptLainnya = getDept("Lainnya");
+    var deptSC = getDept("sc"); // DATABASE BARU SECURITY
 
-    // 2. Mapping Libur
+    // --- MAPPING ROTASI SECURITY (A, B, C, D) ---
+    var scMapping = {}; 
+    deptSC.forEach(function(nama, idx) {
+        scMapping[nama] = idx % 4; // Rotasi Offset: 0, 1, 2, 3
+    });
+
+    // 2. Mapping Libur Kalender
     var cacheLibur = {}; 
     if (kalenderLibur && kalenderLibur.length > 0) {
         for (var i = 0; i < kalenderLibur.length; i++) {
@@ -376,7 +385,7 @@ function prosesAudit(dataArray, kalenderLibur) {
         }
     }
 
-    // 4. Ekstraksi Unik & Buang Libur serta Lintas Bulan
+    // 4. Ekstraksi Unik
     var rawEmpDays = {}; 
     var allDatesSet = {};
     for(var i = 1; i < dataArray.length; i++){
@@ -400,7 +409,7 @@ function prosesAudit(dataArray, kalenderLibur) {
         if(!cacheLibur[d]) validDates.push(d); 
     }
 
-    // 5. Generate Jadwal Lembur Random Per Dept
+    // 5. Generate Jadwal Lembur Random Per Dept (Hanya untuk non-SC)
     function pickRandomDays(arr, count) {
         var shuffled = arr.slice().sort(function(){return 0.5 - Math.random()});
         return shuffled.slice(0, count);
@@ -428,9 +437,11 @@ function prosesAudit(dataArray, kalenderLibur) {
     for(var n = 0; n < sortedNames.length; n++) {
         var nama = sortedNames[n];
         var dept = "Unknown";
+        
         if(deptHB.indexOf(nama) > -1) dept = "HB";
         else if(deptRJ.indexOf(nama) > -1) dept = "RJ";
         else if(deptEL.indexOf(nama) > -1) dept = "EL";
+        else if(deptSC.indexOf(nama) > -1) dept = "SC"; 
         else if(deptLainnya.indexOf(nama) > -1) dept = "Lainnya";
 
         if(dept === "Unknown") {
@@ -439,30 +450,87 @@ function prosesAudit(dataArray, kalenderLibur) {
 
         var otPersonLainnya = [];
         if (dept === "Lainnya" && allMasterOT.length > 0) {
-            var countLainnya = Math.floor(Math.random() * 4); // Acak 0, 1, 2, 3 hari
+            var countLainnya = Math.floor(Math.random() * 4); 
             otPersonLainnya = pickRandomDays(allMasterOT, Math.min(countLainnya, allMasterOT.length));
         }
 
         hasil.push([nama + " (" + dept + ")", "Waktu", "Status", "Jam Kerja Total", "JK", "Lembur", "Keterangan"]);
         warnaBaris("#3B3838");
 
-        var tgls = Object.keys(rawEmpDays[nama]).sort(function(a, b){
-            var aa = parseWaktu(a + " 00.00").getTime();
-            var bb = parseWaktu(b + " 00.00").getTime();
-            return aa - bb;
-        });
+        var tgls = [];
+        
+        if (dept === "SC" && targetMonthStr) {
+            var tmParts = targetMonthStr.split('/');
+            var mo = parseInt(tmParts[0], 10) - 1;
+            var yr = parseInt(tmParts[1], 10);
+            var daysInMo = new Date(yr, mo + 1, 0).getDate();
+            for(var d = 1; d <= daysInMo; d++) {
+                var ddStr = String(d).padStart(2, '0');
+                var mmStr = String(mo + 1).padStart(2, '0');
+                tgls.push(ddStr + "/" + mmStr + "/" + yr);
+            }
+        } else {
+            tgls = Object.keys(rawEmpDays[nama]).sort(function(a, b){
+                var aa = parseWaktu(a + " 00.00").getTime();
+                var bb = parseWaktu(b + " 00.00").getTime();
+                return aa - bb;
+            });
+        }
 
         var totalHari = 0;
         var totalLembur = 0;
 
         for(var t = 0; t < tgls.length; t++) {
             var tgl = tgls[t];
-            
-            if(cacheLibur[tgl]) continue; 
-
-            var dtObj = parseWaktu(tgl + " 00.00");
-            var isJumat = dtObj.getDay() === 5;
+            var dateObj = parseWaktu(tgl + " 00.00");
+            var isJumat = dateObj.getDay() === 5;
             var currentColor = isJumat ? "#FFFF00" : "#FFFFFF";
+            
+            // ==========================================
+            // LOGIKA KHUSUS DEPARTEMEN SECURITY (SC)
+            // ==========================================
+            if (dept === "SC") {
+                var shiftOffset = scMapping[nama];
+                
+                var hariKe = (dateObj.getDate() - 1 + shiftOffset) % 4;
+                var shift = ['P','S','M','L'][hariKe];
+                
+                if (shift === 'L') continue; 
+                
+                var jadwal = {
+                    'P': { in: "06.50", out: "15.10" },
+                    'S': { in: "14.50", out: "23.10" },
+                    'M': { in: "22.50", out: "07.10" }
+                }[shift];
+                
+                var strIn = tgl + " " + jadwal.in;
+                var strOut = "";
+                
+                if (shift === 'M') {
+                    var dtNext = new Date(dateObj.getTime());
+                    dtNext.setDate(dtNext.getDate() + 1);
+                    var ddOut = String(dtNext.getDate()).padStart(2, '0');
+                    var mmOut = String(dtNext.getMonth() + 1).padStart(2, '0');
+                    var yyyyOut = dtNext.getFullYear();
+                    strOut = ddOut + "/" + mmOut + "/" + yyyyOut + " " + jadwal.out;
+                } else {
+                    strOut = tgl + " " + jadwal.out;
+                }
+
+                hasil.push([nama, strIn, "C/MASUK", "", "", "", "Shift " + shift]);
+                warnaBaris(currentColor);
+                
+                hasil.push([nama, strOut, "C/KELUAR", 8, 8, "", "Shift " + shift]);
+                warnaBaris(currentColor);
+                
+                totalHari++;
+                continue; 
+            }
+
+            // ==========================================
+            // LOGIKA KARYAWAN PABRIK REGULER
+            // ==========================================
+            if(cacheLibur[tgl]) continue; 
 
             var lemburDur = 0;
             if(dept === "HB" && otHB.indexOf(tgl) > -1) lemburDur = 3;
@@ -478,13 +546,12 @@ function prosesAudit(dataArray, kalenderLibur) {
                 lemburDur = 2.5;
             }
 
-            // --- GENERATE JAM MASUK (07:46 - 08:00) ---
-            var minIn = Math.floor(Math.random() * 15) + 46; // Random 46 hingga 60
+            // --- REVISI: GENERATE JAM MASUK (07:51 - 08:00) ---
+            var minIn = Math.floor(Math.random() * 10) + 51; // Random 51 hingga 60
             var hIn = 7;
             if(minIn >= 60) { hIn = 8; minIn -= 60; }
             var strIn = tgl + " 0" + hIn + "." + (minIn < 10 ? "0" + minIn : minIn);
 
-            // GENERATE JAM PULANG BASE (Jumat 17:30-40, Normal 17:00-10)
             var minOutBase = isJumat ? (Math.floor(Math.random() * 11) + 30) : Math.floor(Math.random() * 11);
             var hOutBase = 17;
 
