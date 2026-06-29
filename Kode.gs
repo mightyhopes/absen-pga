@@ -59,6 +59,18 @@ function formatDesimal(val) {
     return Math.round(val * 100) / 100;
 }
 
+function getDatabaseArray(ssData, sheetName) {
+    var sheet = ssData.getSheetByName(sheetName);
+    var arr = [];
+    if(sheet) {
+        var data = sheet.getRange("B2:B150").getValues();
+        for(var r=0; r<data.length; r++) {
+            if(data[r][0]) arr.push(String(data[r][0]).trim().toUpperCase());
+        }
+    }
+    return arr;
+}
+
 // ==========================================
 // 🚀 MAIN SWITCHER ROUTER
 // ==========================================
@@ -75,7 +87,7 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur, mode) {
 }
 
 // ==========================================
-// 🛡️ ENGINE 1: PAYROLL (EXISTING - TERMASUK FIX BUG #1)
+// 🛡️ ENGINE 1: PAYROLL 
 // ==========================================
 function prosesPayroll(dataArray, kalenderLibur) {
     var hasil = [];
@@ -86,29 +98,21 @@ function prosesPayroll(dataArray, kalenderLibur) {
     var idSheetDatabase = '1sYQ6CQK8JAWEfUXxzf6OkdsTDcfHzRiOA_fOpxXWTyI';
     var ssData = SpreadsheetApp.openById(idSheetDatabase);
     
-    var sheetKK = ssData.getSheetByName("KK");
-    var KARYAWAN_KONTRAK = [];
-    if(sheetKK) {
-        var dataKK = sheetKK.getRange("B2:B100").getValues();
-        for(var r=0; r<dataKK.length; r++) {
-            if(dataKK[r][0]) KARYAWAN_KONTRAK.push(String(dataKK[r][0]).trim().toUpperCase());
-        }
-    }
+    var KARYAWAN_KONTRAK = getDatabaseArray(ssData, "KK");
+    var KARYAWAN_HL = getDatabaseArray(ssData, "HL");
+    var KARYAWAN_STAFF = getDatabaseArray(ssData, "STAFF");
+    var KARYAWAN_ALL_IN = getDatabaseArray(ssData, "ALL_IN");
 
-    var sheetHL = ssData.getSheetByName("HL");
-    var KARYAWAN_HL = [];
-    if(sheetHL) {
-        var dataHL = sheetHL.getRange("B2:B100").getValues();
-        for(var r=0; r<dataHL.length; r++) {
-            if(dataHL[r][0]) KARYAWAN_HL.push(String(dataHL[r][0]).trim().toUpperCase());
-        }
-    }
-
-    var cacheLibur = {}; 
+    var cacheLiburProduksi = {}; 
+    var cacheLiburStaff = {}; 
+    
     if (kalenderLibur && kalenderLibur.length > 0) {
         for (var i = 0; i < kalenderLibur.length; i++) {
             if (kalenderLibur[i].aktif) {
-                cacheLibur[kalenderLibur[i].tanggal] = true;
+                var tgl = kalenderLibur[i].tanggal;
+                var target = kalenderLibur[i].target || 'semua';
+                if (target === 'semua' || target === 'produksi') cacheLiburProduksi[tgl] = true;
+                if (target === 'semua' || target === 'staff') cacheLiburStaff[tgl] = true;
             }
         }
     }
@@ -131,10 +135,15 @@ function prosesPayroll(dataArray, kalenderLibur) {
     for (var n = 0; n < urutanNama.length; n++) {
       var namaKaryawan = urutanNama[n];
       var absenKaryawan = dataPerNama[namaKaryawan];
+      var nKey = namaKaryawan.toUpperCase();
       
-      var isKK = (KARYAWAN_KONTRAK.indexOf(namaKaryawan.toUpperCase()) !== -1);
-      var isHL = (KARYAWAN_HL.indexOf(namaKaryawan.toUpperCase()) !== -1);
-      var tipeString = isKK ? "KK" : (isHL ? "HL" : "Unknown->HL");
+      var isKK = (KARYAWAN_KONTRAK.indexOf(nKey) !== -1);
+      var isHL = (KARYAWAN_HL.indexOf(nKey) !== -1);
+      var isStaff = (KARYAWAN_STAFF.indexOf(nKey) !== -1);
+      var isAllIn = (KARYAWAN_ALL_IN.indexOf(nKey) !== -1);
+      
+      var tipeString = isStaff ? "STAFF" : (isKK ? "KK" : (isHL ? "HL" : "HL"));
+      if (isAllIn) tipeString += " / ALL-IN";
 
       hasil.push([namaKaryawan + " (" + tipeString + ")", "Waktu", "Status", "Jam Kerja Total", "JK", "Lembur", "Keterangan"]);
       warnaBaris("#3B3838");
@@ -151,7 +160,7 @@ function prosesPayroll(dataArray, kalenderLibur) {
         var tglCekStr = a.waktuStr.split(' ')[0];
         var dayIndex = dtCurrent.getDay();
         
-        var isHariLibur = cacheLibur[tglCekStr] || false; 
+        var isHariLibur = isStaff ? (cacheLiburStaff[tglCekStr] || false) : (cacheLiburProduksi[tglCekStr] || false);
         var isJumat = (dayIndex === 5);
         
         var currentColor = "#FFFFFF"; 
@@ -160,7 +169,6 @@ function prosesPayroll(dataArray, kalenderLibur) {
 
         if (prevEvent !== null && a.status === prevEvent.status) {
             var gapDuplikat = (dtCurrent.getTime() - prevEvent.dt.getTime()) / (1000 * 60 * 60);
-            // FIX BUG #1: gapDuplikat > 0 (Mencegah baris yang di-replay membuang dirinya sendiri)
             if (gapDuplikat > 0 && gapDuplikat < HR_CONFIG.BATAS_WAKTU.DUPLIKAT_STATUS) {
                 hasil.push([a.nama, a.waktuStr, a.status, "", "", "", "Mengulang - Diabaikan"]);
                 warnaBaris(currentColor);
@@ -176,7 +184,7 @@ function prosesPayroll(dataArray, kalenderLibur) {
             if (isMasukStr) {
                 trackerMasuk = { dt: dtCurrent, a: a, rowIndex: hasil.length, isLibur: isHariLibur, isJum: isJumat };
                 hasil.push([a.nama, a.waktuStr, a.status, "", "", "", a.pengecualian]);
-                warnaBaris(currentColor);
+                warnaBaris(currentColor); 
             } else {
                 var keteranganError = "INVALID (Belum ada Masuk)";
                 if (k === 0) keteranganError = "Abaikan - Lanjutan Shift Bulan Sebelumnya";
@@ -195,7 +203,6 @@ function prosesPayroll(dataArray, kalenderLibur) {
                 hasil[trackerMasuk.rowIndex][6] = "LUPA ABSEN KELUAR (> 16 Jam)";
                 warna[trackerMasuk.rowIndex] = ["#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC"];
                 trackerMasuk = null; 
-                // Karena Bug #1 sudah di-fix di atas, replay (k--) di bawah ini 100% AMAN
                 k--; continue;
             } 
             else {
@@ -213,30 +220,37 @@ function prosesPayroll(dataArray, kalenderLibur) {
                         ket = baseKet + "Tidak Dihitung (< 15 Menit)";
                     } else {
                         var jamEfektif = menitLemburEfektif / 60;
-                        var mDecimalKasar = jamToDecimal(dtMasuk);
-                        var isRandomStart = false;
-                        if ((mDecimalKasar >= 9.0 && mDecimalKasar <= 18.0) || (mDecimalKasar >= 21.0 || mDecimalKasar <= 4.0)) {
-                            isRandomStart = true;
-                        }
 
-                        if (trackerMasuk.isLibur || hariTercatatNormal[tglMasukAsli] || isRandomStart) {
+                        // FIX BUG: Hapus isRandomStart. 
+                        // Shift kurang dari 4 jam hanya jadi lembur JIKA hari libur, atau sdh kerja full sblmnya.
+                        if (trackerMasuk.isLibur) {
                             if (isKK) {
                                 outLembur = jamEfektif;
                                 outTotal = jamEfektif;
-                                ket = baseKet + "Lembur Singkat";
+                                ket = baseKet + "Lembur Libur Singkat";
                             } else {
                                 outJk = jamEfektif;
                                 outTotal = jamEfektif;
-                                ket = baseKet + "Kerja Singkat (HL)";
+                                ket = baseKet + "Kerja Libur Singkat";
                             }
+                        } else if (hariTercatatNormal[tglMasukAsli]) {
+                            outLembur = jamEfektif;
+                            outTotal = jamEfektif;
+                            ket = baseKet + "Lembur Tambahan";
                         } else {
                             if (isKK) {
-                                outTotal = ""; outJk = 0; outLembur = 0;
-                                ket = baseKet + "Izin (Kerja < 4 Jam)";
+                                if (jamEfektif >= 4) {
+                                    outJk = jamEfektif;
+                                    outTotal = jamEfektif;
+                                    ket = baseKet + "Kerja 4 Jam (KK)";
+                                } else {
+                                    outTotal = ""; outJk = 0; outLembur = 0;
+                                    ket = baseKet + "Izin (Kerja < 4 Jam)";
+                                }
                             } else {
                                 outJk = jamEfektif;
                                 outTotal = jamEfektif;
-                                ket = baseKet + "Kerja Singkat (HL)";
+                                ket = baseKet + "Kerja Singkat";
                             }
                         }
                     }
@@ -259,13 +273,20 @@ function prosesPayroll(dataArray, kalenderLibur) {
                     kDecimalKasar += dayDiff * 24;
                     
                     var endEffective = roundKeluar(kDecimalKasar * 60) / 60;
+                    var durasiKotor = endEffective - baseStart;
+                    var potongIstirahat = 0;
 
-                    var potongIstirahat = HR_CONFIG.ISTIRAHAT.NORMAL;
-                    if (trackerMasuk.isJum && !trackerMasuk.isLibur) {
-                        potongIstirahat = HR_CONFIG.ISTIRAHAT.JUMAT;
+                    // FIX BUG: HANYA potong jam istirahat jika durasi kotor lebih dari 4.0 jam.
+                    // Jadi karyawan yang bekerja pas 4 jam tidak akan hangus dihitung "Izin".
+                    if (durasiKotor > 4.0) {
+                        if (trackerMasuk.isJum) {
+                            potongIstirahat = HR_CONFIG.ISTIRAHAT.JUMAT;
+                        } else {
+                            potongIstirahat = HR_CONFIG.ISTIRAHAT.NORMAL;
+                        }
                     }
 
-                    var jkKotor = endEffective - baseStart - potongIstirahat;
+                    var jkKotor = durasiKotor - potongIstirahat;
                     if (jkKotor < 0) jkKotor = 0;
 
                     if (isKK && jkKotor < 4 && !trackerMasuk.isLibur) {
@@ -283,7 +304,7 @@ function prosesPayroll(dataArray, kalenderLibur) {
                                 outJk = HR_CONFIG.MAKS_JK;
                                 outLembur = jkKotor - HR_CONFIG.MAKS_JK;
                             } else {
-                                outJk = jkKotor;
+                                outJk = jkKotor; // 4 Jam akan terisi ke sini dengan akurat!
                             }
                         }
                         ket = baseKet + "Hadir";
@@ -291,6 +312,11 @@ function prosesPayroll(dataArray, kalenderLibur) {
                 }
 
                 if (!ket && baseKet) ket = a.pengecualian; 
+                
+                if (isAllIn && ket !== "") {
+                    ket += " [ALL-IN]";
+                }
+
                 outTotal = formatDesimal(outTotal);
                 outJk = formatDesimal(outJk);
                 outLembur = formatDesimal(outLembur);
@@ -299,7 +325,12 @@ function prosesPayroll(dataArray, kalenderLibur) {
                 if (outTotal !== "" && outTotal > 0) totalHariKaryawan++;
 
                 hasil.push([a.nama, a.waktuStr, a.status, outTotal, outJk, outLembur, ket]);
-                warnaBaris(currentColor);
+                
+                var lockedColor = "#FFFFFF";
+                if (trackerMasuk.isLibur) lockedColor = "#FFC000";
+                else if (trackerMasuk.isJum) lockedColor = "#FFFF00";
+
+                warnaBaris(lockedColor);
                 trackerMasuk = null;
             }
         }
@@ -327,13 +358,12 @@ function prosesPayroll(dataArray, kalenderLibur) {
 }
 
 // ==========================================
-// 🕵️‍♂️ ENGINE 2: AUDIT (ENGINE BARU PGA)
+// 🕵️‍♂️ ENGINE 2: AUDIT 
 // ==========================================
 function prosesAudit(dataArray, kalenderLibur) {
     var hasil = [];
     var warna = []; 
 
-    // 1. Ambil DB Audit
     var idSheetDatabase = '1sYQ6CQK8JAWEfUXxzf6OkdsTDcfHzRiOA_fOpxXWTyI';
     var ssData = SpreadsheetApp.openById(idSheetDatabase);
     
@@ -348,15 +378,13 @@ function prosesAudit(dataArray, kalenderLibur) {
     var deptRJ = getDept("RJ");
     var deptEL = getDept("EL");
     var deptLainnya = getDept("Lainnya");
-    var deptSC = getDept("sc"); // DATABASE BARU SECURITY
+    var deptSC = getDept("sc"); 
 
-    // --- MAPPING ROTASI SECURITY (A, B, C, D) ---
     var scMapping = {}; 
     deptSC.forEach(function(nama, idx) {
-        scMapping[nama] = idx % 4; // Rotasi Offset: 0, 1, 2, 3
+        scMapping[nama] = idx % 4; 
     });
 
-    // 2. Mapping Libur Kalender
     var cacheLibur = {}; 
     if (kalenderLibur && kalenderLibur.length > 0) {
         for (var i = 0; i < kalenderLibur.length; i++) {
@@ -364,7 +392,6 @@ function prosesAudit(dataArray, kalenderLibur) {
         }
     }
 
-    // 3. AUTO-DETEKSI BULAN UTAMA
     var monthCounts = {};
     var maxCount = 0;
     var targetMonthStr = "";
@@ -385,7 +412,6 @@ function prosesAudit(dataArray, kalenderLibur) {
         }
     }
 
-    // 4. Ekstraksi Unik
     var rawEmpDays = {}; 
     var allDatesSet = {};
     for(var i = 1; i < dataArray.length; i++){
@@ -409,7 +435,6 @@ function prosesAudit(dataArray, kalenderLibur) {
         if(!cacheLibur[d]) validDates.push(d); 
     }
 
-    // 5. Generate Jadwal Lembur Random Per Dept (Hanya untuk non-SC)
     function pickRandomDays(arr, count) {
         var shuffled = arr.slice().sort(function(){return 0.5 - Math.random()});
         return shuffled.slice(0, count);
@@ -431,7 +456,6 @@ function prosesAudit(dataArray, kalenderLibur) {
 
     function warnaBaris(hex) { warna.push([hex, hex, hex, hex, hex, hex, hex]); }
 
-    // 6. Normalisasi & Generate Output
     var sortedNames = Object.keys(rawEmpDays).sort();
 
     for(var n = 0; n < sortedNames.length; n++) {
@@ -486,12 +510,8 @@ function prosesAudit(dataArray, kalenderLibur) {
             var isJumat = dateObj.getDay() === 5;
             var currentColor = isJumat ? "#FFFF00" : "#FFFFFF";
             
-            // ==========================================
-            // LOGIKA KHUSUS DEPARTEMEN SECURITY (SC)
-            // ==========================================
             if (dept === "SC") {
                 var shiftOffset = scMapping[nama];
-                
                 var hariKe = (dateObj.getDate() - 1 + shiftOffset) % 4;
                 var shift = ['P','S','M','L'][hariKe];
                 
@@ -527,9 +547,6 @@ function prosesAudit(dataArray, kalenderLibur) {
                 continue; 
             }
 
-            // ==========================================
-            // LOGIKA KARYAWAN PABRIK REGULER
-            // ==========================================
             if(cacheLibur[tgl]) continue; 
 
             var lemburDur = 0;
@@ -541,13 +558,11 @@ function prosesAudit(dataArray, kalenderLibur) {
                 lemburDur = opts[Math.floor(Math.random() * opts.length)];
             }
 
-            // MAKSIMAL LEMBUR JUMAT 2.5 JAM
             if (isJumat && lemburDur > 2.5) {
                 lemburDur = 2.5;
             }
 
-            // --- REVISI: GENERATE JAM MASUK (07:51 - 08:00) ---
-            var minIn = Math.floor(Math.random() * 10) + 51; // Random 51 hingga 60
+            var minIn = Math.floor(Math.random() * 10) + 51; 
             var hIn = 7;
             if(minIn >= 60) { hIn = 8; minIn -= 60; }
             var strIn = tgl + " 0" + hIn + "." + (minIn < 10 ? "0" + minIn : minIn);
