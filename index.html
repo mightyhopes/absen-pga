@@ -459,6 +459,17 @@
             document.getElementById('new-holiday-end').value = "";
             document.getElementById('new-holiday-name').value = "";
             renderKalender();
+
+            tampilkanToast("Tanggal libur berhasil ditambahkan!");
+        }
+
+        function tampilkanToast(msg) {
+            var toast = document.createElement('div');
+            toast.className = 'fixed bottom-4 right-4 bg-green-500 text-white px-4 py-2 rounded shadow-lg transition-opacity duration-300 z-50';
+            toast.innerText = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+            setTimeout(() => { toast.remove(); }, 2300);
         }
 
         function prosesKeServer(modeTarget) {
