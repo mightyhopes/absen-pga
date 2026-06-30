@@ -44,6 +44,12 @@ Sistem membaca identitas karyawan dari database dan menerapkan perlakuan yang be
 Sistem membedakan shift pendek (pulang sakit) dengan lembur malam dengan melihat pola:
 * Jika durasi `< 4 Jam`, namun karyawan memiliki jam masuk *"random"* (misal jam 13:00 atau jam 21:00), atau terdeteksi sudah memiliki shift normal sebelumnya di hari yang sama $\rightarrow$ Dihitung sebagai **Lembur Singkat**.
 
+### E. Engine TMK (Tidak Masuk Kerja)
+Khusus untuk karyawan berstatus **KK (Kontrak)**, sistem dilengkapi dengan perhitungan TMK terotomatisasi di akhir *payroll*:
+* **Hari Kerja Efektif:** Dihitung berdasarkan rentang kalender di bulan terkait, di luar Sabtu, Minggu, dan target libur (yang diset HRD di *frontend*).
+* **Hari Hadir Valid:** Karyawan dianggap hadir jika terdapat pasangan sesi Masuk-Keluar dan durasi kerjanya valid (contoh: bukan "Izin" yang nilainya hangus).
+* **Hasil (Output):** Jika ada selisih antara Hari Efektif dan Hadir Valid, maka akan memunculkan nilai TMK di baris `TOTAL AKUMULASI` (misal: `TMK: 2 hari`). Jika TMK lebih dari 0, sistem juga akan menyisipkan satu baris khusus berwarna merah muda yang merinci daftar tanggal ketidakhadirannya agar mudah dilacak.
+
 ---
 
 ## 3. Sistem Failsafe (Penanganan Anomali Mesin)
