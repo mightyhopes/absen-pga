@@ -117,6 +117,49 @@ function prosesPayroll(dataArray, kalenderLibur) {
         }
     }
 
+    var monthCounts = {};
+    var maxCount = 0;
+    var targetMonthStr = "";
+    
+    for (var i = 1; i < dataArray.length; i++) {
+        var row = dataArray[i];
+        if (!row || row.length < 3 || !row[0]) continue;
+        var tglFull = String(row[1]).split(' ')[0]; 
+        var parts = tglFull.split('/');
+        if (parts.length >= 3) {
+            var mStr = parts[1] + "/" + parts[2]; 
+            if (!monthCounts[mStr]) monthCounts[mStr] = 0;
+            monthCounts[mStr]++;
+            if (monthCounts[mStr] > maxCount) {
+                maxCount = monthCounts[mStr];
+                targetMonthStr = mStr; 
+            }
+        }
+    }
+
+    function isWorkingDay(tglStr, checkIsStaff) {
+        if (checkIsStaff) return !cacheLiburStaff[tglStr];
+        return !cacheLiburProduksi[tglStr];
+    }
+
+    function getHariKerjaEfektif(checkIsStaff, tMonthStr) {
+        var efektifDates = [];
+        if (!tMonthStr) return efektifDates;
+        var tmParts = tMonthStr.split('/');
+        var mo = parseInt(tmParts[0], 10) - 1;
+        var yr = parseInt(tmParts[1], 10);
+        var daysInMo = new Date(yr, mo + 1, 0).getDate();
+        for (var d = 1; d <= daysInMo; d++) {
+            var ddStr = String(d).padStart(2, '0');
+            var mmStr = String(mo + 1).padStart(2, '0');
+            var tglCheck = ddStr + "/" + mmStr + "/" + yr;
+            if (isWorkingDay(tglCheck, checkIsStaff)) {
+                efektifDates.push(tglCheck);
+            }
+        }
+        return efektifDates;
+    }
+
     for (var i = 1; i < dataArray.length; i++) {
       var row = dataArray[i];
       if (!row || row.length < 3 || !row[0]) continue;
@@ -153,6 +196,7 @@ function prosesPayroll(dataArray, kalenderLibur) {
       var trackerMasuk = null; 
       var prevEvent = null;
       var hariTercatatNormal = {}; 
+      var hariHadirValid = {}; 
 
       for (var k = 0; k < absenKaryawan.length; k++) {
         var a = absenKaryawan[k];
@@ -322,7 +366,10 @@ function prosesPayroll(dataArray, kalenderLibur) {
                 outLembur = formatDesimal(outLembur);
 
                 if (outLembur !== "" && outLembur > 0) totalLemburKaryawan += parseFloat(outLembur);
-                if (outTotal !== "" && outTotal > 0) totalHariKaryawan++;
+                if (outTotal !== "" && outTotal > 0) {
+                    totalHariKaryawan++;
+                    hariHadirValid[tglMasukAsli] = true;
+                }
 
                 hasil.push([a.nama, a.waktuStr, a.status, outTotal, outJk, outLembur, ket]);
                 
@@ -344,8 +391,31 @@ function prosesPayroll(dataArray, kalenderLibur) {
       var teksHari = totalHariKaryawan > 0 ? totalHariKaryawan + " hari" : "0 hari";
       var totalAkhirLembur = totalLemburKaryawan > 0 ? formatDesimal(totalLemburKaryawan) : "";
       
-      hasil.push(["", "", "", teksHari, "", totalAkhirLembur, "TOTAL AKUMULASI"]);
+      var ketAkumulasi = "TOTAL AKUMULASI";
+      var tmkDatesStr = "";
+      if (isKK) {
+          var hkEfektif = getHariKerjaEfektif(isStaff, targetMonthStr);
+          var tmkCount = 0;
+          var tmkDates = [];
+          for (var hk = 0; hk < hkEfektif.length; hk++) {
+              if (!hariHadirValid[hkEfektif[hk]]) {
+                  tmkCount++;
+                  tmkDates.push(hkEfektif[hk].substring(0, 5));
+              }
+          }
+          ketAkumulasi = "TMK: " + tmkCount + " hari";
+          if (tmkCount > 0) {
+              tmkDatesStr = "Detail Tgl TMK: " + tmkDates.join(", ");
+          }
+      }
+
+      hasil.push(["", "", "", teksHari, "", totalAkhirLembur, ketAkumulasi]);
       warnaBaris("#E2EFDA"); 
+      
+      if (tmkDatesStr !== "") {
+          hasil.push([tmkDatesStr, "", "", "", "", "", ""]);
+          warnaBaris("#FFEEEE");
+      }
       hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
       hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
     }
