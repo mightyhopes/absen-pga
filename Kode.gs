@@ -441,11 +441,12 @@ function prosesPayroll(dataArray, kalenderLibur) {
       hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
     }
 
-    var fileBaruId = simpanDanWarnai(hasil, warna, 'PAYROLL');
-    var linkDrive = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/edit";
-    var linkDownload = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/export?format=xlsx";
+    var hasilSimpan = simpanDanWarnai(hasil, warna, 'PAYROLL');
+    var linkDrive = "https://docs.google.com/spreadsheets/d/" + hasilSimpan.fileId + "/edit";
+    var linkDownload = "https://docs.google.com/spreadsheets/d/" + hasilSimpan.fileId + "/export?format=xlsx";
+    var linkFolder = "https://drive.google.com/drive/folders/" + hasilSimpan.folderId;
 
-    return { status: 'success', driveUrl: linkDrive, downloadUrl: linkDownload };
+    return { status: 'success', driveUrl: linkDrive, downloadUrl: linkDownload, folderUrl: linkFolder };
 }
 
 // ==========================================
@@ -686,11 +687,12 @@ function prosesAudit(dataArray, kalenderLibur) {
         hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
     }
 
-    var fileBaruId = simpanDanWarnai(hasil, warna, 'AUDIT');
-    var linkDrive = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/edit";
-    var linkDownload = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/export?format=xlsx";
+    var hasilSimpan = simpanDanWarnai(hasil, warna, 'AUDIT');
+    var linkDrive = "https://docs.google.com/spreadsheets/d/" + hasilSimpan.fileId + "/edit";
+    var linkDownload = "https://docs.google.com/spreadsheets/d/" + hasilSimpan.fileId + "/export?format=xlsx";
+    var linkFolder = "https://drive.google.com/drive/folders/" + hasilSimpan.folderId;
 
-    return { status: 'success', driveUrl: linkDrive, downloadUrl: linkDownload };
+    return { status: 'success', driveUrl: linkDrive, downloadUrl: linkDownload, folderUrl: linkFolder };
 }
 
 // ==========================================
@@ -781,5 +783,22 @@ function simpanDanWarnai(values, backgrounds, mode) {
   sheet.setColumnWidth(legendColText, 160);
   sheet.setColumnWidth(legendColColor, 40);
 
-  return ss.getId();
+  var fileId = ss.getId();
+  var driveFile = DriveApp.getFileById(fileId);
+  driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  // Pindahkan file ke folder khusus agar Drive tidak berantakan
+  var namaFolder = "Laporan PGA Engine";
+  var folders = DriveApp.getFoldersByName(namaFolder);
+  var folder;
+  if (folders.hasNext()) {
+    folder = folders.next();
+  } else {
+    folder = DriveApp.createFolder(namaFolder);
+  }
+  folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
+  folder.addFile(driveFile);
+  DriveApp.getRootFolder().removeFile(driveFile);
+
+  return { fileId: fileId, folderId: folder.getId() };
 }

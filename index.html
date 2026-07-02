@@ -274,8 +274,13 @@
                 </div>
 
                 <div id="result-panel" class="hidden glass-card rounded-2xl shadow-lg border border-white p-6 scale-in">
-                    <h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b pb-2">Arsip
-                        Laporan</h2>
+                    <div class="flex items-center justify-between mb-4 border-b pb-2">
+                        <h2 class="text-sm font-bold text-slate-500 uppercase tracking-wider">Arsip Laporan</h2>
+                        <a id="folder-link" href="#" target="_blank" class="hidden items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-800 transition bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 hover:border-blue-400">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+                            Buka Folder Drive
+                        </a>
+                    </div>
                     <div id="results-list" class="space-y-3">
                     </div>
                 </div>
@@ -493,6 +498,14 @@
                     if (response.status === 'success') {
                         document.getElementById('result-panel').classList.remove('hidden');
 
+                        // Tampilkan link folder jika ada
+                        if (response.folderUrl) {
+                            var folderLink = document.getElementById('folder-link');
+                            folderLink.href = response.folderUrl;
+                            folderLink.classList.remove('hidden');
+                            folderLink.classList.add('flex');
+                        }
+
                         var resultHtml = `
                 <div class="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-xl">
                     <div class="flex items-center gap-3">
@@ -504,9 +517,9 @@
                             <a href="${response.driveUrl}" target="_blank" class="text-xs text-blue-600 hover:underline">Buka di Sheets↗</a>
                         </div>
                     </div>
-                    <button onclick="window.location.href='${response.downloadUrl}'" class="bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition">
+                    <a href="${response.downloadUrl}" target="_blank" class="bg-green-600 hover:bg-green-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition inline-block text-center cursor-pointer">
                         Download .xlsx
-                    </button>
+                    </a>
                 </div>
             `;
                         document.getElementById('results-list').insertAdjacentHTML('afterbegin', resultHtml);
@@ -514,6 +527,11 @@
                     } else {
                         alert("⚠️ Sistem Error: " + response.message);
                     }
+                })
+                .withFailureHandler(function(error) {
+                    clearInterval(textInterval);
+                    document.getElementById('executor-loading').classList.add('hidden');
+                    alert("🛑 Terjadi Kegagalan Server: " + error.message + "\n\nPastikan data tidak terlalu besar dan Anda memiliki akses ke Database HRD.");
                 })
                 .prosesDataAbsensiServer(dataExcelMentah, kalenderLibur, modeTarget);
         }
