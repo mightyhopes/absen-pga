@@ -202,6 +202,7 @@ function prosesPayroll(dataArray, kalenderLibur) {
       var prevEvent = null;
       var hariTercatatNormal = {}; 
       var hariHadirValid = {}; 
+      var setHariRegulerHadir = {};
 
       for (var k = 0; k < absenKaryawan.length; k++) {
         var a = absenKaryawan[k];
@@ -384,7 +385,9 @@ function prosesPayroll(dataArray, kalenderLibur) {
 
                 if (outLembur !== "" && outLembur > 0) totalLemburKaryawan += parseFloat(outLembur);
                 if (outTotal !== "" && outTotal > 0) {
-                    totalHariKaryawan++;
+                    if (!trackerMasuk.isLibur) {
+                        setHariRegulerHadir[tglMasukAsli] = true;
+                    }
                     hariHadirValid[tglMasukAsli] = true;
                 }
 
@@ -405,6 +408,7 @@ function prosesPayroll(dataArray, kalenderLibur) {
           warna[trackerMasuk.rowIndex] = ["#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC", "#FFCCCC"];
       }
 
+      totalHariKaryawan = Object.keys(setHariRegulerHadir).length;
       var teksHari = totalHariKaryawan > 0 ? totalHariKaryawan + " hari" : "0 hari";
       var totalAkhirLembur = totalLemburKaryawan > 0 ? formatDesimal(totalLemburKaryawan) : "";
       
