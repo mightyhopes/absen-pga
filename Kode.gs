@@ -185,7 +185,12 @@ function prosesPayroll(dataArray, kalenderLibur) {
       var isStaff = (KARYAWAN_STAFF.indexOf(nKey) !== -1);
       var isAllIn = (KARYAWAN_ALL_IN.indexOf(nKey) !== -1);
       
-      var tipeString = isStaff ? "STAFF" : (isKK ? "KK" : (isHL ? "HL" : "HL"));
+      // Jika karyawan baru belum masuk database, secara default anggap HL
+      if (!isKK && !isStaff) {
+          isHL = true;
+      }
+      
+      var tipeString = isStaff ? "STAFF" : (isKK ? "KK" : "HL");
       if (isAllIn) tipeString += " / ALL-IN";
 
       hasil.push([namaKaryawan + " (" + tipeString + ")", "Waktu", "Status", "Jam Kerja Total", "JK", "Lembur", "Keterangan"]);
@@ -272,6 +277,10 @@ function prosesPayroll(dataArray, kalenderLibur) {
                                 outLembur = jamEfektif;
                                 outTotal = jamEfektif;
                                 ket = baseKet + "Lembur Libur Singkat";
+                            } else if (isHL) {
+                                outLembur = jamEfektif;
+                                outTotal = jamEfektif;
+                                ket = baseKet + "Lembur Libur Singkat (HL < 8 Jam)";
                             } else {
                                 outJk = jamEfektif;
                                 outTotal = jamEfektif;
@@ -291,6 +300,10 @@ function prosesPayroll(dataArray, kalenderLibur) {
                                     outTotal = ""; outJk = 0; outLembur = 0;
                                     ket = baseKet + "Izin (Kerja < 4 Jam)";
                                 }
+                            } else if (isHL) {
+                                outLembur = jamEfektif;
+                                outTotal = jamEfektif;
+                                ket = baseKet + "Lembur Singkat (HL < 8 Jam)";
                             } else {
                                 outJk = jamEfektif;
                                 outTotal = jamEfektif;
@@ -343,6 +356,10 @@ function prosesPayroll(dataArray, kalenderLibur) {
                             outLembur = jkKotor;
                             outJk = "";
                         } 
+                        else if (isHL && jkKotor < 8) {
+                            outLembur = jkKotor;
+                            outJk = "";
+                        }
                         else {
                             if (jkKotor > HR_CONFIG.MAKS_JK) {
                                 outJk = HR_CONFIG.MAKS_JK;
