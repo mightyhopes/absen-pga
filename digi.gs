@@ -413,11 +413,12 @@ function prosesDataAbsensiServer(dataArray, kalenderLibur) {
         hasil.push(["", "", "", "", "", "", ""]); warnaBaris("#FFFFFF");
     });
 
-    var fileBaruId = simpanDanWarnai(hasil, warna);
-    var linkDrive = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/edit";
-    var linkDownload = "https://docs.google.com/spreadsheets/d/" + fileBaruId + "/export?format=xlsx";
+    var hasilSimpan = simpanDanWarnai(hasil, warna);
+    var linkDrive = "https://docs.google.com/spreadsheets/d/" + hasilSimpan.fileId + "/edit";
+    var linkDownload = "https://docs.google.com/spreadsheets/d/" + hasilSimpan.fileId + "/export?format=xlsx";
+    var linkFolder = "https://drive.google.com/drive/folders/" + hasilSimpan.folderId;
 
-    return { status: 'success', driveUrl: linkDrive, downloadUrl: linkDownload };
+    return { status: 'success', driveUrl: linkDrive, downloadUrl: linkDownload, folderUrl: linkFolder };
   } catch (error) {
     return { status: 'error', message: error.toString() };
   }
@@ -503,7 +504,21 @@ function simpanDanWarnai(values, backgrounds) {
   var driveFile = DriveApp.getFileById(fileId);
   driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-  return fileId;
+  // Pindahkan file ke folder khusus agar Drive tidak berantakan
+  var namaFolder = "Laporan Audit Digiprint";
+  var folders = DriveApp.getFoldersByName(namaFolder);
+  var folder;
+  if (folders.hasNext()) {
+    folder = folders.next();
+  } else {
+    folder = DriveApp.createFolder(namaFolder);
+  }
+  // Set folder ke Anyone with Link = Editor
+  folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.EDIT);
+  folder.addFile(driveFile);
+  DriveApp.getRootFolder().removeFile(driveFile);
+
+  return { fileId: fileId, folderId: folder.getId() };
 }
 
 // ==========================================
