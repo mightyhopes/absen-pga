@@ -276,7 +276,8 @@
         var endVal = document.getElementById('new-holiday-end').value;
         var nameVal = document.getElementById('new-holiday-name').value;
         
-        if(!startVal || !nameVal) return alert("Harap isi Mulai Tanggal dan Keterangan Libur!");
+        if(!startVal) return alert("Harap isi Mulai Tanggal Libur!");
+        if(!nameVal) nameVal = "Libur Ekstra";
 
         var startDate = new Date(startVal);
         var endDate = endVal ? new Date(endVal) : new Date(startVal);
@@ -348,9 +349,9 @@
                             <a href="${response.driveUrl}" target="_blank" class="text-xs text-blue-600 hover:underline">Buka di Sheets↗</a>
                         </div>
                     </div>
-                    <button onclick="window.location.href='${response.downloadUrl}'" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition">
+                    <a href="${response.downloadUrl}" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 px-3 rounded-lg shadow-sm transition inline-block text-center cursor-pointer">
                         Download .xlsx
-                    </button>
+                    </a>
                 </div>
             `;
             document.getElementById('results-list').insertAdjacentHTML('afterbegin', resultHtml);
@@ -358,6 +359,11 @@
           } else {
             alert("⚠️ Sistem Error: " + response.message);
           }
+        })
+        .withFailureHandler(function(error) {
+            clearInterval(textInterval); 
+            document.getElementById('executor-loading').classList.add('hidden');
+            alert("🛑 Terjadi Kegagalan Server: " + error.message + "\n\nPastikan data tidak terlalu besar dan Anda memiliki akses ke Database HRD.");
         })
         .prosesDataAbsensiServer(dataExcelMentah, kalenderLibur);
     }

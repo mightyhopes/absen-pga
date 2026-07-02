@@ -499,5 +499,21 @@ function simpanDanWarnai(values, backgrounds) {
   sheet.setColumnWidth(legendColText, 160);
   sheet.setColumnWidth(legendColColor, 40);
 
-  return ss.getId();
+  var fileId = ss.getId();
+  var driveFile = DriveApp.getFileById(fileId);
+  driveFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return fileId;
+}
+
+// ==========================================
+// 🔐 FUNGSI PANCINGAN OTORISASI (JALANKAN MANUAL SEKALI)
+// ==========================================
+function OTORISASI_SISTEM() {
+  // Fungsi ini sengaja dibuat agar Google memunculkan popup permintaan akses Drive.
+  // Silakan pilih fungsi ini di dropdown atas, lalu klik RUN.
+  var pancingan = DriveApp.createFile("BukaGembok", "123", MimeType.PLAIN_TEXT);
+  pancingan.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  pancingan.setTrashed(true);
+  Logger.log("Otorisasi Google Drive Berhasil Diberikan!");
 }
